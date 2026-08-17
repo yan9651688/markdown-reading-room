@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f7f5" />
+    <title>Markdown 阅读室</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/vendor/marked.umd.js" defer></script>
+    <script src="/vendor/purify.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell" id="appShell">
+      <header class="topbar">
+        <div class="brand-block">
+          <button class="mobile-menu-button" id="mobileMenuButton" type="button" aria-label="打开目录">
+            <span></span><span></span><span></span>
+          </button>
+          <a class="brand" href="/" aria-label="返回文档首页">
+            <span class="brand-mark" aria-hidden="true">M</span>
+            <span class="brand-name">墨阅</span>
+          </a>
+        </div>
+
+        <div class="topbar-main">
+          <label class="search-box" for="searchInput">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="搜索文件名" />
+            <kbd>Ctrl K</kbd>
+          </label>
+          <div class="topbar-actions">
+            <span class="sync-text" id="syncText" aria-live="polite">正在连接</span>
+            <button class="theme-button" id="themeButton" type="button" aria-label="切换明暗主题">
+              <span class="theme-icon" aria-hidden="true"></span>
+              <span id="themeLabel">深色</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <aside class="sidebar" id="sidebar" aria-label="文档目录">
+        <div class="library-heading">
+          <p>文档库</p>
+          <h1 id="libraryName">正在加载</h1>
+          <span id="fileCount">0 篇文档</span>
+        </div>
+        <nav class="file-tree" id="fileTree"></nav>
+        <div class="sidebar-footer">
+          <span>自动读取目录中的 Markdown</span>
+          <button id="collapseAllButton" type="button">全部收起</button>
+        </div>
+      </aside>
+
+      <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="关闭目录"></button>
+
+      <main class="reader-pane" id="readerPane">
+        <div class="reader-loading" id="readerLoading" role="status">
+          <div class="skeleton skeleton-short"></div>
+          <div class="skeleton skeleton-title"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton skeleton-medium"></div>
+        </div>
+
+        <section class="reader-state" id="emptyState" hidden>
+          <div class="empty-document" aria-hidden="true"><span></span><span></span><span></span></div>
+          <h2>还没有可阅读的 Markdown</h2>
+          <p>把 .md 文件放进当前目录，页面会自动出现。</p>
+        </section>
+
+        <section class="reader-state" id="errorState" hidden>
+          <div class="error-symbol" aria-hidden="true">!</div>
+          <h2>文档暂时无法打开</h2>
+          <p id="errorMessage">请稍后重试。</p>
+          <button id="retryButton" type="button">重新加载</button>
+        </section>
+
+        <article class="document-view" id="documentView" hidden>
+          <header class="document-header">
+            <p class="breadcrumb" id="breadcrumb"></p>
+            <h1 id="documentTitle"></h1>
+            <div class="document-meta">
+              <span id="documentTime"></span>
+              <span id="documentSize"></span>
+            </div>
+          </header>
+          <div class="markdown-body" id="article"></div>
+          <footer class="document-footer">已到文末</footer>
+        </article>
+      </main>
+
+      <aside class="outline" id="outline" aria-label="文章大纲">
+        <p class="outline-title">本页大纲</p>
+        <nav id="outlineNav"></nav>
+      </aside>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

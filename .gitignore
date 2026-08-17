@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+dist/
+.tools/
+reader.json
+.markdown-reader-install.json

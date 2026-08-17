@@ -1,0 +1,4 @@
+interface:
+  display_name: "Markdown 阅读室"
+  short_description: "部署可实时浏览本地 Markdown 目录的清爽网页"
+  default_prompt: "使用 $serve-markdown-library 为指定目录部署一个 Markdown 阅读站。"
