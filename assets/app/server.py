@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 DEFAULT_EXCLUDES = {".git", ".hg", ".svn", ".venv", "node_modules", "__pycache__"}
 DEFAULT_EXTENSIONS = {".md", ".markdown", ".mdown", ".mkd"}
 SAFE_ASSET_EXTENSIONS = {
@@ -66,6 +66,7 @@ SAFE_STATIC_FILES = {
     "/index.html": "index.html",
     "/app.css": "app.css",
     "/appearance.js": "appearance.js",
+    "/runtime.js": "runtime.js",
     "/app.js": "app.js",
     "/favicon.svg": "favicon.svg",
     "/vendor/marked.umd.js": "vendor/marked.umd.js",

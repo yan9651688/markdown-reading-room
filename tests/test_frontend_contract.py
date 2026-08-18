@@ -60,17 +60,32 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn(".tree-library-heading", stylesheet)
         self.assertIn('[data-source-tone="7"]', stylesheet)
 
-    def test_v041_release_label_is_consistent(self) -> None:
+    def test_v042_shared_runtime_contract_is_present(self) -> None:
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        runtime = (STATIC / "runtime.js").read_text(encoding="utf-8")
         server = (ROOT / "assets" / "app" / "server.py").read_text(encoding="utf-8")
         deployer = (ROOT / "scripts" / "deploy.py").read_text(encoding="utf-8")
         for source in (html, javascript, server, deployer):
-            self.assertIn("0.4.1", source)
+            self.assertIn("0.4.2", source)
+        self.assertLess(html.index('<script src="/runtime.js"'), html.index('<script src="/app.js"'))
+        self.assertIn('id="addLibraryButton"', html)
+        self.assertIn('id="emptyAddLibraryButton"', html)
+        self.assertIn("MarkdownRuntime", javascript)
+        for command in (
+            "get_config",
+            "get_tree",
+            "search_documents",
+            "read_document",
+            "resolve_asset_path",
+            "pick_libraries",
+            "remove_library",
+        ):
+            self.assertIn(f'"{command}"', runtime)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_javascript_syntax(self) -> None:
-        for script in ("appearance.js", "app.js"):
+        for script in ("appearance.js", "runtime.js", "app.js"):
             subprocess.run(["node", "--check", str(STATIC / script)], check=True)
 
 

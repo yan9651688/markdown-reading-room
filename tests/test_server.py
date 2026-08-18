@@ -174,7 +174,7 @@ class HttpApiTests(unittest.TestCase):
             return json.loads(response.read().decode("utf-8"))
 
     def test_health_tree_file_and_search_endpoints(self) -> None:
-        self.assertEqual(self.get_json("/health")["version"], "0.4.1")
+        self.assertEqual(self.get_json("/health")["version"], "0.4.2")
         config = self.get_json("/api/config")
         self.assertTrue(config["features"]["themeCenter"])
         self.assertTrue(config["features"]["multiLibrary"])
@@ -194,6 +194,9 @@ class HttpApiTests(unittest.TestCase):
 
     def test_theme_bootstrap_and_favicon_are_served_with_safe_types(self) -> None:
         with urllib.request.urlopen(self.base_url + "/appearance.js", timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
+        with urllib.request.urlopen(self.base_url + "/runtime.js", timeout=3) as response:
             self.assertEqual(response.status, 200)
             self.assertTrue(response.headers["Content-Type"].startswith("text/javascript"))
         with urllib.request.urlopen(self.base_url + "/favicon.svg", timeout=3) as response:

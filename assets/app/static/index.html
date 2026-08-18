@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/app.css" />
     <script src="/vendor/marked.umd.js" defer></script>
     <script src="/vendor/purify.min.js" defer></script>
+    <script src="/runtime.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -61,7 +62,7 @@
                     <span class="theme-panel-kicker">阅读外观</span>
                     <h2>主题中心</h2>
                   </div>
-                  <span class="theme-panel-version">v0.4.1</span>
+                  <span class="theme-panel-version">v0.4.2</span>
                 </header>
 
                 <div class="theme-section">
@@ -117,6 +118,12 @@
           <h1 id="libraryName">正在加载</h1>
           <span id="fileCount">0 篇文档</span>
         </div>
+        <div class="library-native-actions" id="libraryNativeActions" hidden>
+          <button class="library-add-button" id="addLibraryButton" type="button">
+            <span aria-hidden="true">＋</span> 添加目录
+          </button>
+          <button class="library-remove-button" id="removeLibraryButton" type="button" hidden>移除当前</button>
+        </div>
         <nav class="library-sources" id="librarySources" aria-label="按文档来源筛选"></nav>
         <div class="library-tabs" role="tablist" aria-label="目录视图">
           <button class="is-active" type="button" role="tab" aria-selected="true" data-library-view="tree">目录</button>
@@ -143,8 +150,9 @@
 
         <section class="reader-state" id="emptyState" hidden>
           <div class="empty-document" aria-hidden="true"><span></span><span></span><span></span></div>
-          <h2>还没有可阅读的 Markdown</h2>
-          <p>把 .md 文件放进当前目录，页面会自动出现。</p>
+          <h2 id="emptyStateTitle">还没有可阅读的 Markdown</h2>
+          <p id="emptyStateMessage">把 .md 文件放进当前目录，页面会自动出现。</p>
+          <button class="empty-add-button" id="emptyAddLibraryButton" type="button" hidden>选择 Markdown 文件夹</button>
         </section>
 
         <section class="reader-state" id="errorState" hidden>

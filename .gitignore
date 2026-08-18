@@ -4,5 +4,8 @@ __pycache__/
 Thumbs.db
 dist/
 .tools/
+node_modules/
+src-tauri/target/
+src-tauri/gen/schemas/
 reader.json
 .markdown-reader-install.json

@@ -1,6 +1,9 @@
 (() => {
   "use strict";
 
+  const runtime = window.MarkdownRuntime;
+  if (!runtime) throw new Error("运行时适配器没有正确加载");
+
   const elements = {
     root: document.documentElement,
     searchInput: document.getElementById("searchInput"),
@@ -20,6 +23,9 @@
     sidebarScrim: document.getElementById("sidebarScrim"),
     libraryName: document.getElementById("libraryName"),
     fileCount: document.getElementById("fileCount"),
+    libraryNativeActions: document.getElementById("libraryNativeActions"),
+    addLibraryButton: document.getElementById("addLibraryButton"),
+    removeLibraryButton: document.getElementById("removeLibraryButton"),
     librarySources: document.getElementById("librarySources"),
     fileTree: document.getElementById("fileTree"),
     libraryTabs: [...document.querySelectorAll("[data-library-view]")],
@@ -27,6 +33,9 @@
     readerPane: document.getElementById("readerPane"),
     readerLoading: document.getElementById("readerLoading"),
     emptyState: document.getElementById("emptyState"),
+    emptyStateTitle: document.getElementById("emptyStateTitle"),
+    emptyStateMessage: document.getElementById("emptyStateMessage"),
+    emptyAddLibraryButton: document.getElementById("emptyAddLibraryButton"),
     errorState: document.getElementById("errorState"),
     errorMessage: document.getElementById("errorMessage"),
     retryButton: document.getElementById("retryButton"),
@@ -90,7 +99,7 @@
   }
 
   const state = {
-    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.4.1", libraries: [] },
+    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.4.2", libraries: [] },
     libraries: [],
     nodes: [],
     version: "",
@@ -222,10 +231,7 @@
   }
 
   async function fetchJSON(url, options = {}) {
-    const response = await fetch(url, { cache: "no-store", ...options });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `请求失败 (${response.status})`);
-    return payload;
+    return runtime.request(url, options);
   }
 
   function setReaderState(name) {
@@ -273,6 +279,82 @@
     return state.nodes.find((node) => node.type === "library" && node.id === libraryId) || null;
   }
 
+  function syncNativeControls() {
+    const selected = libraryById(state.libraryFilter)
+      || (state.libraries.length === 1 ? state.libraries[0] : null);
+    elements.libraryNativeActions.hidden = !runtime.isDesktop;
+    elements.emptyAddLibraryButton.hidden = !runtime.isDesktop || state.libraries.length > 0;
+    elements.removeLibraryButton.hidden = !runtime.isDesktop || !selected;
+    elements.removeLibraryButton.dataset.libraryId = selected?.id || "";
+    elements.removeLibraryButton.title = selected ? `从书架移除“${selected.name}”（不会删除原文件）` : "";
+  }
+
+  function applyConfig(config) {
+    state.config = config && typeof config === "object" ? config : state.config;
+    state.libraries = Array.isArray(state.config.libraries) ? state.config.libraries : [];
+    if (state.libraryFilter !== "all" && !libraryById(state.libraryFilter)) state.libraryFilter = "all";
+    renderLibrarySources();
+    updateLibrarySummary();
+    syncNativeControls();
+    document.title = state.config.title || "Markdown 阅读室";
+  }
+
+  function updateEmptyState() {
+    if (runtime.isDesktop && !state.libraries.length) {
+      elements.emptyStateTitle.textContent = "添加第一个 Markdown 目录";
+      elements.emptyStateMessage.textContent = "选择本机文件夹后，墨阅会只读建立目录与全文索引。";
+    } else if (runtime.isDesktop) {
+      elements.emptyStateTitle.textContent = "目录里还没有 Markdown";
+      elements.emptyStateMessage.textContent = "添加 .md 文件后，桌面版会自动刷新书架。";
+    } else {
+      elements.emptyStateTitle.textContent = "还没有可阅读的 Markdown";
+      elements.emptyStateMessage.textContent = "把 .md 文件放进当前目录，页面会自动出现。";
+    }
+    syncNativeControls();
+  }
+
+  async function addDesktopLibraries() {
+    if (!runtime.isDesktop) return;
+    const previousCount = state.libraries.length;
+    elements.addLibraryButton.disabled = true;
+    elements.emptyAddLibraryButton.disabled = true;
+    elements.syncText.textContent = "等待选择目录";
+    try {
+      const config = await runtime.pickLibraries();
+      applyConfig(config);
+      await refreshTree({ initial: true });
+      if (state.libraries.length > previousCount) showToast(`已添加 ${state.libraries.length - previousCount} 个文档来源`);
+      else showToast("没有添加新的目录");
+    } catch (error) {
+      showToast(error.message || "目录添加失败");
+    } finally {
+      elements.addLibraryButton.disabled = false;
+      elements.emptyAddLibraryButton.disabled = false;
+    }
+  }
+
+  async function removeDesktopLibrary() {
+    const libraryId = elements.removeLibraryButton.dataset.libraryId || "";
+    const library = libraryById(libraryId);
+    if (!runtime.isDesktop || !library) return;
+    if (!window.confirm(`从书架移除“${library.name}”？\n\n原目录和 Markdown 文件不会被删除。`)) return;
+    elements.removeLibraryButton.disabled = true;
+    try {
+      const config = await runtime.removeLibrary(library.id);
+      state.libraryFilter = "all";
+      writeJSON(STORAGE.libraryFilter, "all");
+      state.currentPath = "";
+      state.currentMtime = 0;
+      applyConfig(config);
+      await refreshTree({ initial: true });
+      showToast(`已移除 ${library.name}`);
+    } catch (error) {
+      showToast(error.message || "目录移除失败");
+    } finally {
+      elements.removeLibraryButton.disabled = false;
+    }
+  }
+
   function visibleTreeNodes() {
     if (state.libraryFilter === "all") return state.nodes;
     return libraryNodeById(state.libraryFilter)?.children || [];
@@ -298,6 +380,7 @@
     elements.searchInput.placeholder = selected
       ? `搜索 ${selected.name} 的标题与正文`
       : "搜索全部来源的标题与正文";
+    syncNativeControls();
   }
 
   function renderLibrarySources() {
@@ -620,14 +703,19 @@
     return /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value) || value.startsWith("//");
   }
 
-  function prepareDocumentLinks(currentPath) {
+  async function prepareDocumentLinks(currentPath) {
+    const assetTasks = [];
     for (const image of elements.article.querySelectorAll("img")) {
       const src = image.getAttribute("src") || "";
       if (!src || src.startsWith("#") || src.startsWith("data:") || isExternal(src)) continue;
       const localPath = resolveLocalPath(currentPath, src);
-      image.src = `/api/asset?path=${encodeURIComponent(localPath)}`;
       image.loading = "lazy";
       image.addEventListener("error", () => image.classList.add("is-broken"), { once: true });
+      assetTasks.push(
+        runtime.assetUrl(localPath)
+          .then((url) => { image.src = url; })
+          .catch(() => image.classList.add("is-broken")),
+      );
     }
 
     for (const link of elements.article.querySelectorAll("a")) {
@@ -653,11 +741,19 @@
           });
         });
       } else {
-        link.href = `/api/asset?path=${encodeURIComponent(localPath)}`;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
+        link.removeAttribute("href");
+        assetTasks.push(
+          runtime.assetUrl(localPath)
+            .then((url) => {
+              link.href = url;
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+            })
+            .catch(() => link.classList.add("is-broken")),
+        );
       }
     }
+    await Promise.allSettled(assetTasks);
   }
 
   function buildOutline() {
@@ -700,7 +796,7 @@
     headings.forEach((heading) => state.outlineObserver.observe(heading));
   }
 
-  function renderMarkdown(file) {
+  async function renderMarkdown(file) {
     if (!window.marked || !window.DOMPurify) throw new Error("Markdown 渲染组件没有正确加载");
     const frontmatter = parseFrontmatter(file.content);
     const rendered = window.marked.parse(frontmatter.body, { gfm: true, breaks: false });
@@ -726,7 +822,7 @@
     elements.breadcrumb.textContent = (file.relativePath || file.path).split("/").join("  /  ");
     elements.documentTime.textContent = formatTime(file.mtime);
     elements.documentSize.textContent = formatBytes(file.size);
-    prepareDocumentLinks(file.path);
+    await prepareDocumentLinks(file.path);
     buildOutline();
     document.title = `${title} · ${state.config.title}`;
   }
@@ -750,7 +846,7 @@
 
     try {
       const file = await fetchJSON(`/api/file?path=${encodeURIComponent(path)}`, { signal: controller.signal });
-      renderMarkdown(file);
+      await renderMarkdown(file);
       state.currentPath = file.path;
       state.currentMtime = file.mtime;
       localStorage.setItem(STORAGE.lastPath, file.path);
@@ -934,6 +1030,7 @@
         state.currentPath = "";
         state.currentMtime = 0;
         renderSidebar();
+        updateEmptyState();
         setReaderState("empty");
         return;
       }
@@ -985,6 +1082,9 @@
   }
 
   function bindEvents() {
+    elements.addLibraryButton.addEventListener("click", addDesktopLibraries);
+    elements.emptyAddLibraryButton.addEventListener("click", addDesktopLibraries);
+    elements.removeLibraryButton.addEventListener("click", removeDesktopLibrary);
     elements.themeButton.addEventListener("click", () => setThemePanel(elements.themePanel.hidden));
     bindRadioGroup(elements.themeCards, (card) => {
       const nextTheme = card.dataset.readingTheme || "ink";
@@ -1082,16 +1182,13 @@
   }
 
   async function initialize() {
+    document.body.dataset.runtime = runtime.kind;
     initializeAppearance();
     bindEvents();
+    syncNativeControls();
     setReaderState("loading");
     try {
-      state.config = await fetchJSON("/api/config");
-      state.libraries = Array.isArray(state.config.libraries) ? state.config.libraries : [];
-      if (state.libraryFilter !== "all" && !libraryById(state.libraryFilter)) state.libraryFilter = "all";
-      renderLibrarySources();
-      updateLibrarySummary();
-      document.title = state.config.title;
+      applyConfig(await fetchJSON("/api/config"));
       await refreshTree({ initial: true });
       window.setInterval(() => refreshTree(), Math.max(800, Number(state.config.pollMs) || 2200));
     } catch (error) {

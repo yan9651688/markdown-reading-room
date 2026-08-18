@@ -26,3 +26,25 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
           gh release upload "$GITHUB_REF_NAME" "dist/Markdown-Reading-Room-Skill-${GITHUB_REF_NAME}.zip" --clobber
+
+  windows-release:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Windows release packages
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1
+      - name: Publish Windows release assets
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Get-ChildItem -LiteralPath "dist/windows" -File | ForEach-Object {
+            gh release upload $env:GITHUB_REF_NAME $_.FullName --clobber
+          }

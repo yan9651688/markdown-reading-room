@@ -1,0 +1,14 @@
+{
+  "name": "markdown-reading-room",
+  "version": "0.4.2",
+  "private": true,
+  "description": "墨阅 Markdown 阅读室的跨平台桌面壳",
+  "scripts": {
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build --bundles nsis"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0"
+  }
+}

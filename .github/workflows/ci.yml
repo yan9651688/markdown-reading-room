@@ -35,3 +35,23 @@ jobs:
           name: Markdown-Reading-Room-Skill
           path: dist/Markdown-Reading-Room-Skill.zip
           if-no-files-found: error
+
+  desktop-windows:
+    name: Windows desktop build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Windows release artifacts
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1
+      - name: Upload Windows validation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moyue-Markdown-Reading-Room-Windows
+          path: dist/windows/
+          if-no-files-found: error

@@ -1096,6 +1096,60 @@ button {
   font-size: 12px;
 }
 
+.library-native-actions {
+  display: flex;
+  gap: 7px;
+  margin: -4px 16px 13px;
+}
+
+.library-native-actions[hidden] {
+  display: none;
+}
+
+.library-native-actions button {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.library-add-button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--text);
+  color: var(--bg);
+}
+
+.library-add-button span {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.library-remove-button {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.library-native-actions button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  filter: brightness(0.98);
+}
+
+.library-native-actions button:disabled,
+.empty-add-button:disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
 .library-sources {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
