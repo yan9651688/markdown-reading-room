@@ -6,6 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f7f7f5" />
     <title>Markdown 阅读室</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script src="/appearance.js"></script>
     <link rel="stylesheet" href="/app.css" />
     <script src="/vendor/marked.umd.js" defer></script>
     <script src="/vendor/purify.min.js" defer></script>
@@ -27,7 +29,7 @@
         <div class="topbar-main">
           <label class="search-box" for="searchInput">
             <span class="search-icon" aria-hidden="true"></span>
-            <input id="searchInput" type="search" autocomplete="off" placeholder="搜索标题、路径和正文" />
+            <input id="searchInput" type="search" autocomplete="off" placeholder="搜索全部来源的标题与正文" />
             <kbd>Ctrl K</kbd>
           </label>
           <section class="search-panel" id="searchPanel" aria-label="全文搜索结果" hidden>
@@ -39,20 +41,83 @@
           </section>
           <div class="topbar-actions">
             <span class="sync-text" id="syncText" aria-live="polite">正在连接</span>
-            <button class="theme-button" id="themeButton" type="button" aria-label="切换明暗主题">
-              <span class="theme-icon" aria-hidden="true"></span>
-              <span id="themeLabel">深色</span>
-            </button>
+            <div class="theme-control" id="themeControl">
+              <button
+                class="theme-button"
+                id="themeButton"
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-controls="themePanel"
+                aria-label="打开主题中心"
+              >
+                <span class="theme-icon" aria-hidden="true"><i></i></span>
+                <span id="themeLabel">墨阅</span>
+                <span class="theme-chevron" aria-hidden="true"></span>
+              </button>
+              <section class="theme-panel" id="themePanel" role="dialog" aria-label="主题中心" hidden>
+                <header class="theme-panel-header">
+                  <div>
+                    <span class="theme-panel-kicker">阅读外观</span>
+                    <h2>主题中心</h2>
+                  </div>
+                  <span class="theme-panel-version">v0.4.1</span>
+                </header>
+
+                <div class="theme-section">
+                  <p class="theme-section-title">风格</p>
+                  <div class="theme-grid" role="radiogroup" aria-label="阅读风格">
+                    <button class="theme-card" type="button" role="radio" aria-checked="true" data-reading-theme="ink">
+                      <span class="theme-card-preview theme-preview-ink" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="theme-card-copy"><strong>墨阅</strong><small>安静而克制</small></span>
+                      <span class="theme-card-check" aria-hidden="true">✓</span>
+                    </button>
+                    <button class="theme-card" type="button" role="radio" aria-checked="false" data-reading-theme="github">
+                      <span class="theme-card-preview theme-preview-github" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="theme-card-copy"><strong>GitHub</strong><small>代码与文档</small></span>
+                      <span class="theme-card-check" aria-hidden="true">✓</span>
+                    </button>
+                    <button class="theme-card" type="button" role="radio" aria-checked="false" data-reading-theme="notion">
+                      <span class="theme-card-preview theme-preview-notion" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="theme-card-copy"><strong>Notion</strong><small>宽松工作台</small></span>
+                      <span class="theme-card-check" aria-hidden="true">✓</span>
+                    </button>
+                    <button class="theme-card" type="button" role="radio" aria-checked="false" data-reading-theme="codex">
+                      <span class="theme-card-preview theme-preview-codex" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="theme-card-copy"><strong>Codex</strong><small>专注工作流</small></span>
+                      <span class="theme-card-check" aria-hidden="true">✓</span>
+                    </button>
+                    <button class="theme-card" type="button" role="radio" aria-checked="false" data-reading-theme="claude">
+                      <span class="theme-card-preview theme-preview-claude" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="theme-card-copy"><strong>Claude</strong><small>温暖纸张感</small></span>
+                      <span class="theme-card-check" aria-hidden="true">✓</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="theme-section theme-mode-section">
+                  <p class="theme-section-title">明暗</p>
+                  <div class="mode-switch" role="radiogroup" aria-label="明暗模式">
+                    <button type="button" role="radio" aria-checked="true" data-color-mode="system"><span class="mode-icon mode-icon-system" aria-hidden="true"></span>跟随系统</button>
+                    <button type="button" role="radio" aria-checked="false" data-color-mode="light"><span class="mode-icon mode-icon-light" aria-hidden="true"></span>浅色</button>
+                    <button type="button" role="radio" aria-checked="false" data-color-mode="dark"><span class="mode-icon mode-icon-dark" aria-hidden="true"></span>深色</button>
+                  </div>
+                </div>
+
+                <footer class="theme-panel-footer">仅改变阅读外观，不会修改任何文档</footer>
+              </section>
+            </div>
           </div>
         </div>
       </header>
 
       <aside class="sidebar" id="sidebar" aria-label="文档目录">
         <div class="library-heading">
-          <p>文档库</p>
+          <p>Agent 文档书架</p>
           <h1 id="libraryName">正在加载</h1>
           <span id="fileCount">0 篇文档</span>
         </div>
+        <nav class="library-sources" id="librarySources" aria-label="按文档来源筛选"></nav>
         <div class="library-tabs" role="tablist" aria-label="目录视图">
           <button class="is-active" type="button" role="tab" aria-selected="true" data-library-view="tree">目录</button>
           <button type="button" role="tab" aria-selected="false" data-library-view="recent">最近</button>
@@ -91,7 +156,10 @@
 
         <article class="document-view" id="documentView" hidden>
           <header class="document-header">
-            <p class="breadcrumb" id="breadcrumb"></p>
+            <div class="document-context">
+              <span class="source-badge" id="documentSource"></span>
+              <p class="breadcrumb" id="breadcrumb"></p>
+            </div>
             <div class="document-title-row">
               <h1 id="documentTitle"></h1>
               <button class="favorite-button" id="favoriteButton" type="button" aria-pressed="false" aria-label="收藏当前文档">

@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.4.1"
 DEFAULT_EXCLUDES = {".git", ".hg", ".svn", ".venv", "node_modules", "__pycache__"}
 DEFAULT_EXTENSIONS = {".md", ".markdown", ".mdown", ".mkd"}
 SAFE_ASSET_EXTENSIONS = {
@@ -59,12 +59,15 @@ MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_SEARCH_QUERY = 120
 MAX_SEARCH_RESULTS = 50
 INDEX_WORKERS = min(8, max(2, os.cpu_count() or 2))
+SOURCE_TONE_COUNT = 8
 SAFE_STATIC_FILES = {
     "": "index.html",
     "/": "index.html",
     "/index.html": "index.html",
     "/app.css": "app.css",
+    "/appearance.js": "appearance.js",
     "/app.js": "app.js",
+    "/favicon.svg": "favicon.svg",
     "/vendor/marked.umd.js": "vendor/marked.umd.js",
     "/vendor/purify.min.js": "vendor/purify.min.js",
 }
@@ -91,40 +94,94 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 @dataclass(frozen=True)
+class LibrarySource:
+    id: str
+    name: str
+    root: Path
+    tone: int = 0
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", self.id):
+            raise ValueError(f"文档库 ID 不合法: {self.id}")
+        resolved = self.root.expanduser().resolve()
+        object.__setattr__(self, "root", resolved)
+        object.__setattr__(self, "name", self.name.strip() or resolved.name or self.id)
+        object.__setattr__(self, "tone", int(self.tone) % SOURCE_TONE_COUNT)
+
+
+@dataclass(frozen=True)
 class AppConfig:
     root: Path
     title: str
     poll_ms: int
     extensions: frozenset[str]
     excludes: frozenset[str]
+    libraries: tuple[LibrarySource, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "root", self.root.expanduser().resolve())
+        resolved_root = self.root.expanduser().resolve()
+        libraries = tuple(self.libraries) or (
+            LibrarySource("main", resolved_root.name or "文档目录", resolved_root, 0),
+        )
+        identifiers = [source.id for source in libraries]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("文档库 ID 不能重复")
+        object.__setattr__(self, "root", libraries[0].root)
+        object.__setattr__(self, "libraries", libraries)
+
+    @property
+    def primary_library(self) -> LibrarySource:
+        return self.libraries[0]
+
+    def library(self, library_id: str) -> LibrarySource | None:
+        return next((source for source in self.libraries if source.id == library_id), None)
+
+    def virtual_path(self, source: LibrarySource, relative: str) -> str:
+        normalized = relative.replace("\\", "/").lstrip("/")
+        if source.id == self.primary_library.id:
+            return normalized
+        return f"@{source.id}/{normalized}" if normalized else f"@{source.id}"
+
+    def resolve_path(self, relative: str) -> tuple[LibrarySource, str, Path]:
+        normalized = unquote(relative).replace("\\", "/").lstrip("/")
+        source = self.primary_library
+        local_relative = normalized
+        if normalized.startswith("@"):
+            namespace, separator, remainder = normalized.partition("/")
+            selected = self.library(namespace[1:])
+            if selected is not None:
+                source = selected
+                local_relative = remainder if separator else ""
+        if any(part in self.excludes for part in Path(local_relative).parts):
+            raise PermissionError("路径位于已忽略的目录中")
+        candidate = (source.root / local_relative).resolve()
+        try:
+            candidate.relative_to(source.root)
+        except ValueError as exc:
+            raise PermissionError("路径超出所属文档库") from exc
+        return source, local_relative, candidate
 
     def safe_path(self, relative: str) -> Path:
-        normalized = unquote(relative).replace("\\", "/").lstrip("/")
-        if any(part in self.excludes for part in Path(normalized).parts):
-            raise PermissionError("路径位于已忽略的目录中")
-        candidate = (self.root / normalized).resolve()
-        try:
-            candidate.relative_to(self.root)
-        except ValueError as exc:
-            raise PermissionError("路径超出 Markdown 根目录") from exc
-        return candidate
+        return self.resolve_path(relative)[2]
 
 
 @dataclass(frozen=True)
 class FileRecord:
     path: str
+    relative_path: str
     name: str
     filename: str
     mtime: int
     size: int
+    library_id: str
+    library_name: str
+    library_tone: int
 
 
 @dataclass(frozen=True)
 class SearchDocument:
     path: str
+    relative_path: str
     name: str
     filename: str
     title: str
@@ -133,14 +190,21 @@ class SearchDocument:
     mtime: int
     size: int
     indexed: bool
+    library_id: str
+    library_name: str
+    library_tone: int
 
 
-def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int, dict[str, FileRecord]]:
+def scan_tree(
+    config: AppConfig,
+) -> tuple[list[dict[str, Any]], str, int, dict[str, FileRecord], dict[str, int]]:
     fingerprint = hashlib.sha256()
     file_count = 0
     records: dict[str, FileRecord] = {}
 
-    def walk(directory: Path) -> list[dict[str, Any]]:
+    library_counts: dict[str, int] = {}
+
+    def walk(source: LibrarySource, directory: Path) -> list[dict[str, Any]]:
         nonlocal file_count
         folders: list[dict[str, Any]] = []
         files: list[dict[str, Any]] = []
@@ -154,16 +218,21 @@ def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int, dict[s
             if entry.name in config.excludes or entry.is_symlink():
                 continue
             path = Path(entry.path)
-            relative = path.relative_to(config.root).as_posix()
+            relative = path.relative_to(source.root).as_posix()
+            virtual_path = config.virtual_path(source, relative)
             try:
                 if entry.is_dir(follow_symlinks=False):
-                    children = walk(path)
+                    children = walk(source, path)
                     if children:
                         folders.append(
                             {
                                 "type": "folder",
                                 "name": entry.name,
-                                "path": relative,
+                                "path": virtual_path,
+                                "relativePath": relative,
+                                "libraryId": source.id,
+                                "libraryName": source.name,
+                                "libraryTone": source.tone,
                                 "children": children,
                             }
                         )
@@ -175,6 +244,7 @@ def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int, dict[s
                 continue
 
             file_count += 1
+            fingerprint.update(source.id.encode("utf-8"))
             fingerprint.update(relative.encode("utf-8", errors="surrogatepass"))
             fingerprint.update(str(stat.st_mtime_ns).encode("ascii"))
             fingerprint.update(str(stat.st_size).encode("ascii"))
@@ -183,22 +253,48 @@ def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int, dict[s
                     "type": "file",
                     "name": path.stem,
                     "filename": entry.name,
-                    "path": relative,
+                    "path": virtual_path,
+                    "relativePath": relative,
                     "mtime": stat.st_mtime_ns,
                     "size": stat.st_size,
+                    "libraryId": source.id,
+                    "libraryName": source.name,
+                    "libraryTone": source.tone,
                 }
             )
-            records[relative] = FileRecord(
-                path=relative,
+            records[virtual_path] = FileRecord(
+                path=virtual_path,
+                relative_path=relative,
                 name=path.stem,
                 filename=entry.name,
                 mtime=stat.st_mtime_ns,
                 size=stat.st_size,
+                library_id=source.id,
+                library_name=source.name,
+                library_tone=source.tone,
             )
         return folders + files
 
-    nodes = walk(config.root)
-    return nodes, fingerprint.hexdigest()[:20], file_count, records
+    nodes: list[dict[str, Any]] = []
+    for source in config.libraries:
+        before = file_count
+        children = walk(source, source.root)
+        count = file_count - before
+        library_counts[source.id] = count
+        fingerprint.update(source.id.encode("utf-8"))
+        fingerprint.update(str(source.root).encode("utf-8", errors="surrogatepass"))
+        nodes.append(
+            {
+                "type": "library",
+                "id": source.id,
+                "name": source.name,
+                "path": f"@{source.id}",
+                "tone": source.tone,
+                "fileCount": count,
+                "children": children,
+            }
+        )
+    return nodes, fingerprint.hexdigest()[:20], file_count, records, library_counts
 
 
 def decode_markdown(raw: bytes) -> str:
@@ -239,9 +335,12 @@ def build_search_document(config: AppConfig, record: FileRecord) -> SearchDocume
             title, text = markdown_search_text(decode_markdown(raw), record.name)
         except (OSError, PermissionError):
             indexed = False
-    searchable = " ".join((record.path, record.filename, record.name, title, text)).casefold()
+    searchable = " ".join(
+        (record.library_name, record.relative_path, record.filename, record.name, title, text)
+    ).casefold()
     return SearchDocument(
         path=record.path,
+        relative_path=record.relative_path,
         name=record.name,
         filename=record.filename,
         title=title,
@@ -250,6 +349,9 @@ def build_search_document(config: AppConfig, record: FileRecord) -> SearchDocume
         mtime=record.mtime,
         size=record.size,
         indexed=indexed,
+        library_id=record.library_id,
+        library_name=record.library_name,
+        library_tone=record.library_tone,
     )
 
 
@@ -282,6 +384,7 @@ class LibraryIndex:
         self._nodes: list[dict[str, Any]] = []
         self._version = ""
         self._file_count = 0
+        self._library_counts: dict[str, int] = {}
         self._documents: dict[str, SearchDocument] = {}
         self._scan_ms = 0.0
         self._last_error = ""
@@ -310,7 +413,7 @@ class LibraryIndex:
     def refresh(self) -> bool:
         with self._refresh_lock:
             started = time.perf_counter()
-            nodes, version, file_count, records = scan_tree(self.config)
+            nodes, version, file_count, records, library_counts = scan_tree(self.config)
             with self._lock:
                 previous_version = self._version
                 previous_documents = self._documents
@@ -336,6 +439,7 @@ class LibraryIndex:
                 self._nodes = nodes
                 self._version = version
                 self._file_count = file_count
+                self._library_counts = library_counts
                 self._documents = documents
                 self._scan_ms = elapsed_ms
                 self._last_error = ""
@@ -347,12 +451,13 @@ class LibraryIndex:
                 "nodes": self._nodes,
                 "version": self._version,
                 "fileCount": self._file_count,
+                "libraryCounts": dict(self._library_counts),
                 "indexedCount": sum(1 for document in self._documents.values() if document.indexed),
                 "scanMs": round(self._scan_ms, 1),
                 "error": self._last_error,
             }
 
-    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def search(self, query: str, limit: int = 20, library_id: str | None = None) -> list[dict[str, Any]]:
         normalized = " ".join(query.split()).casefold()
         if not normalized:
             return []
@@ -362,6 +467,8 @@ class LibraryIndex:
 
         ranked: list[tuple[int, SearchDocument]] = []
         for document in documents:
+            if library_id and document.library_id != library_id:
+                continue
             if any(term not in document.searchable for term in terms):
                 continue
             title = document.title.casefold()
@@ -389,6 +496,7 @@ class LibraryIndex:
             results.append(
                 {
                     "path": document.path,
+                    "relativePath": document.relative_path,
                     "name": document.name,
                     "title": document.title,
                     "snippet": search_snippet(document.text, terms),
@@ -396,6 +504,9 @@ class LibraryIndex:
                     "size": document.size,
                     "score": score,
                     "indexed": document.indexed,
+                    "libraryId": document.library_id,
+                    "libraryName": document.library_name,
+                    "libraryTone": document.library_tone,
                 }
             )
         return results
@@ -465,13 +576,34 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/config":
+            snapshot = self.library_index.snapshot()
+            library_counts = snapshot["libraryCounts"]
             self.send_json(
                 {
                     "title": self.config.title,
-                    "rootName": self.config.root.name or str(self.config.root),
+                    "rootName": (
+                        self.config.primary_library.name
+                        if len(self.config.libraries) == 1
+                        else f"{len(self.config.libraries)} 个文档来源"
+                    ),
                     "pollMs": self.config.poll_ms,
                     "version": APP_VERSION,
-                    "features": {"fullTextSearch": True, "readingState": True},
+                    "libraries": [
+                        {
+                            "id": source.id,
+                            "name": source.name,
+                            "tone": source.tone,
+                            "fileCount": library_counts.get(source.id, 0),
+                            "primary": source.id == self.config.primary_library.id,
+                        }
+                        for source in self.config.libraries
+                    ],
+                    "features": {
+                        "fullTextSearch": True,
+                        "readingState": True,
+                        "themeCenter": True,
+                        "multiLibrary": True,
+                    },
                 }
             )
             return
@@ -499,19 +631,25 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error_json(HTTPStatus.BAD_REQUEST, "limit 必须是整数")
             return
-        results = self.library_index.search(phrase, limit)
-        self.send_json({"query": phrase, "count": len(results), "results": results})
+        library_id = (query.get("library") or [""])[0].strip()
+        if library_id and self.config.library(library_id) is None:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "指定的文档来源不存在")
+            return
+        results = self.library_index.search(phrase, limit, library_id or None)
+        self.send_json(
+            {"query": phrase, "library": library_id or "all", "count": len(results), "results": results}
+        )
 
-    def query_path(self, query: dict[str, list[str]]) -> tuple[str, Path]:
+    def query_path(self, query: dict[str, list[str]]) -> tuple[str, LibrarySource, str, Path]:
         values = query.get("path", [])
         if not values or not values[0]:
             raise ValueError("缺少 path 参数")
-        relative = values[0].replace("\\", "/").lstrip("/")
-        return relative, self.config.safe_path(relative)
+        source, relative, path = self.config.resolve_path(values[0])
+        return self.config.virtual_path(source, relative), source, relative, path
 
     def serve_markdown(self, query: dict[str, list[str]]) -> None:
         try:
-            relative, path = self.query_path(query)
+            virtual_path, source, relative, path = self.query_path(query)
             if path.suffix.casefold() not in self.config.extensions:
                 raise PermissionError("不是允许的 Markdown 文件")
             stat = path.stat()
@@ -533,18 +671,22 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
         content = decode_markdown(raw)
         self.send_json(
             {
-                "path": relative,
+                "path": virtual_path,
+                "relativePath": relative,
                 "filename": path.name,
                 "name": path.stem,
                 "content": content,
                 "mtime": stat.st_mtime_ns,
                 "size": stat.st_size,
+                "libraryId": source.id,
+                "libraryName": source.name,
+                "libraryTone": source.tone,
             }
         )
 
     def serve_asset(self, query: dict[str, list[str]]) -> None:
         try:
-            _, path = self.query_path(query)
+            _, _, _, path = self.query_path(query)
             if path.suffix.casefold() not in SAFE_ASSET_EXTENSIONS:
                 raise PermissionError("不允许通过阅读站访问这种文件")
             stat = path.stat()
@@ -593,10 +735,76 @@ def normalize_extensions(values: list[str] | None, config_values: Any) -> frozen
     return frozenset(normalized)
 
 
+def unique_library_id(value: str, index: int, used: set[str]) -> str:
+    candidate = re.sub(r"[^a-z0-9_-]+", "-", value.casefold()).strip("-_")
+    if not candidate or not candidate[0].isalnum():
+        candidate = f"library-{index + 1}"
+    base = candidate
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def parse_library_spec(value: str) -> tuple[str, Path]:
+    name, separator, raw_path = value.partition("=")
+    if not separator or not name.strip() or not raw_path.strip():
+        raise SystemExit(f"文档库参数格式错误: {value!r}，请使用 名称=绝对路径")
+    return name.strip(), Path(raw_path.strip())
+
+
+def build_library_sources(args: argparse.Namespace, values: dict[str, Any]) -> tuple[LibrarySource, ...]:
+    entries: list[dict[str, Any]] = []
+    if args.library:
+        if args.root:
+            entries.append({"name": args.root.expanduser().name or "主文档库", "root": args.root})
+        for specification in args.library:
+            name, root = parse_library_spec(specification)
+            entries.append({"name": name, "root": root})
+    elif args.root:
+        entries.append({"name": args.root.expanduser().name or "文档目录", "root": args.root})
+    elif values.get("libraries"):
+        configured = values["libraries"]
+        if not isinstance(configured, list):
+            raise SystemExit("reader.json 中的 libraries 必须是数组")
+        for item in configured:
+            if not isinstance(item, dict):
+                raise SystemExit("reader.json 中每个文档库都必须是对象")
+            root_value = item.get("root") or item.get("path")
+            if not root_value:
+                raise SystemExit("reader.json 中的文档库缺少 root")
+            entries.append(dict(item, root=root_value))
+    elif values.get("root"):
+        root_value = values["root"]
+        root_path = Path(root_value).expanduser()
+        entries.append({"id": "main", "name": root_path.name or "文档目录", "root": root_value})
+
+    if not entries:
+        raise SystemExit("请使用 --root、--library，或在 reader.json 中配置 root/libraries。")
+
+    used_ids: set[str] = set()
+    sources: list[LibrarySource] = []
+    for index, entry in enumerate(entries):
+        root = Path(entry["root"]).expanduser().resolve()
+        if not root.is_dir():
+            raise SystemExit(f"Markdown 文档库不存在: {root}")
+        name = str(entry.get("name") or root.name or f"文档库 {index + 1}").strip()
+        source_id = unique_library_id(str(entry.get("id") or name), index, used_ids)
+        try:
+            tone = int(entry.get("tone", index))
+        except (TypeError, ValueError):
+            tone = index
+        sources.append(LibrarySource(source_id, name, root, tone))
+    return tuple(sources)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="启动只读 Markdown 目录阅读站")
     parser.add_argument("--config", type=Path, help="reader.json 配置文件")
     parser.add_argument("--root", type=Path, help="Markdown 文件根目录")
+    parser.add_argument("--library", action="append", help="文档库，格式为 名称=绝对路径，可重复")
     parser.add_argument("--title", help="页面标题")
     parser.add_argument("--host", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, help="端口，默认 4173")
@@ -613,21 +821,21 @@ def main() -> int:
     config_path = args.config.resolve() if args.config else default_config
     values = load_json(config_path) if config_path.exists() else {}
 
-    root_value = args.root or values.get("root")
-    if not root_value:
-        raise SystemExit("请使用 --root 指定 Markdown 根目录，或在 reader.json 中配置 root。")
-    root = Path(root_value).expanduser().resolve()
-    if not root.is_dir():
-        raise SystemExit(f"Markdown 根目录不存在: {root}")
-
-    title = args.title or values.get("title") or f"{root.name} · Markdown 阅读室"
+    libraries = build_library_sources(args, values)
+    root = libraries[0].root
+    default_title = (
+        f"{libraries[0].name} · Markdown 阅读室"
+        if len(libraries) == 1
+        else "我的 Agent 文档书架"
+    )
+    title = args.title or values.get("title") or default_title
     host = args.host or values.get("host") or "127.0.0.1"
     port = args.port if args.port is not None else int(values.get("port", 4173))
     poll_ms = args.poll_ms if args.poll_ms is not None else int(values.get("pollMs", 2200))
     poll_ms = max(800, min(poll_ms, 60_000))
     extensions = normalize_extensions(args.extension, values.get("extensions"))
     excludes = frozenset(DEFAULT_EXCLUDES | set(values.get("excludes", [])) | set(args.exclude or []))
-    app_config = AppConfig(root, str(title), poll_ms, extensions, excludes)
+    app_config = AppConfig(root, str(title), poll_ms, extensions, excludes, libraries)
     library_index = LibraryIndex(app_config)
 
     server = ThreadingHTTPServer((host, port), MarkdownReaderHandler)
@@ -643,7 +851,9 @@ def main() -> int:
     url = f"http://{display_host}:{server.server_port}"
 
     print("\nMarkdown 阅读室已启动")
-    print(f"目录: {root}")
+    print(f"文档来源: {len(libraries)} 个")
+    for source in libraries:
+        print(f"  - {source.name}: {source.root}")
     print(f"地址: {url}")
     if host in {"0.0.0.0", "::"}:
         print("提示: 当前允许局域网访问。此服务不含登录认证，请勿直接暴露到公网。")

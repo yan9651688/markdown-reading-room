@@ -15,6 +15,7 @@ INCLUDED_FILES = (
     Path("SKILL.md"),
     Path("agents/openai.yaml"),
     Path("scripts/deploy.py"),
+    Path("scripts/discover.py"),
 )
 INCLUDED_TREES = (Path("assets/app"),)
 EXCLUDED_PARTS = {"__pycache__", ".DS_Store", "Thumbs.db"}

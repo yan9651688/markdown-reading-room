@@ -29,6 +29,7 @@ class BuildReleaseTests(unittest.TestCase):
                 names = archive.namelist()
             self.assertIn("serve-markdown-library/SKILL.md", names)
             self.assertIn("serve-markdown-library/assets/app/server.py", names)
+            self.assertIn("serve-markdown-library/scripts/discover.py", names)
             self.assertFalse(any("__pycache__" in name for name in names))
             self.assertFalse(any(name.endswith((".pyc", ".pyo")) for name in names))
             self.assertFalse(any(name.startswith("serve-markdown-library/tests/") for name in names))

@@ -9,13 +9,18 @@
     searchResults: document.getElementById("searchResults"),
     clearSearchButton: document.getElementById("clearSearchButton"),
     syncText: document.getElementById("syncText"),
+    themeControl: document.getElementById("themeControl"),
     themeButton: document.getElementById("themeButton"),
     themeLabel: document.getElementById("themeLabel"),
+    themePanel: document.getElementById("themePanel"),
+    themeCards: [...document.querySelectorAll(".theme-card[data-reading-theme]")],
+    colorModeButtons: [...document.querySelectorAll(".mode-switch [data-color-mode]")],
     mobileMenuButton: document.getElementById("mobileMenuButton"),
     sidebar: document.getElementById("sidebar"),
     sidebarScrim: document.getElementById("sidebarScrim"),
     libraryName: document.getElementById("libraryName"),
     fileCount: document.getElementById("fileCount"),
+    librarySources: document.getElementById("librarySources"),
     fileTree: document.getElementById("fileTree"),
     libraryTabs: [...document.querySelectorAll("[data-library-view]")],
     collapseAllButton: document.getElementById("collapseAllButton"),
@@ -26,6 +31,7 @@
     errorMessage: document.getElementById("errorMessage"),
     retryButton: document.getElementById("retryButton"),
     documentView: document.getElementById("documentView"),
+    documentSource: document.getElementById("documentSource"),
     breadcrumb: document.getElementById("breadcrumb"),
     documentTitle: document.getElementById("documentTitle"),
     documentTime: document.getElementById("documentTime"),
@@ -44,8 +50,22 @@
     recents: "md-reader-recents",
     scroll: "md-reader-scroll-positions",
     lastPath: "md-reader-last-path",
-    theme: "md-reader-theme",
+    legacyTheme: "md-reader-theme",
+    themeStyle: "md-reader-theme-style",
+    colorMode: "md-reader-color-mode",
+    libraryFilter: "md-reader-library-filter",
   };
+
+  const THEME_PRESETS = {
+    ink: { label: "墨阅", colors: { light: "#f7f7f5", dark: "#171816" } },
+    github: { label: "GitHub", colors: { light: "#ffffff", dark: "#0d1117" } },
+    notion: { label: "Notion", colors: { light: "#fbfbfa", dark: "#191919" } },
+    codex: { label: "Codex", colors: { light: "#f3f1eb", dark: "#0d1210" } },
+    claude: { label: "Claude", colors: { light: "#f8f3e9", dark: "#1c1815" } },
+  };
+  const COLOR_MODES = new Set(["system", "light", "dark"]);
+  const COLOR_MODE_LABELS = { system: "跟随系统", light: "浅色", dark: "深色" };
+  const systemColorQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
   function readJSON(key, fallback) {
     try {
@@ -70,7 +90,8 @@
   }
 
   const state = {
-    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.2.1" },
+    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.4.1", libraries: [] },
+    libraries: [],
     nodes: [],
     version: "",
     fileCount: 0,
@@ -90,6 +111,9 @@
     searchRequest: null,
     searchResults: [],
     searchSelection: -1,
+    readingTheme: "ink",
+    colorMode: "system",
+    libraryFilter: readJSON(STORAGE.libraryFilter, "all"),
   };
 
   function persistExpanded() {
@@ -117,19 +141,84 @@
     state.scrollSaveTimer = window.setTimeout(() => persistScroll(), 180);
   }
 
-  function applyTheme(theme, persist = true) {
-    const selected = theme === "dark" ? "dark" : "light";
-    elements.root.dataset.theme = selected;
-    elements.themeLabel.textContent = selected === "dark" ? "浅色" : "深色";
-    elements.themeButton.setAttribute("aria-label", selected === "dark" ? "切换到浅色主题" : "切换到深色主题");
-    document.querySelector('meta[name="theme-color"]').setAttribute("content", selected === "dark" ? "#171816" : "#f7f7f5");
-    if (persist) localStorage.setItem(STORAGE.theme, selected);
+  function resolveColorMode(colorMode) {
+    return colorMode === "system" ? (systemColorQuery.matches ? "dark" : "light") : colorMode;
   }
 
-  function initializeTheme() {
-    const saved = localStorage.getItem(STORAGE.theme);
-    const preferred = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    applyTheme(saved || preferred, Boolean(saved));
+  function applyAppearance(readingTheme, colorMode, persist = true) {
+    const selectedTheme = THEME_PRESETS[readingTheme] ? readingTheme : "ink";
+    const selectedMode = COLOR_MODES.has(colorMode) ? colorMode : "system";
+    const resolvedMode = resolveColorMode(selectedMode);
+    const preset = THEME_PRESETS[selectedTheme];
+
+    state.readingTheme = selectedTheme;
+    state.colorMode = selectedMode;
+    elements.root.dataset.readingTheme = selectedTheme;
+    elements.root.dataset.colorMode = selectedMode;
+    elements.root.dataset.theme = resolvedMode;
+    elements.root.style.colorScheme = resolvedMode;
+    elements.themeLabel.textContent = preset.label;
+    elements.themeButton.setAttribute(
+      "aria-label",
+      `当前为 ${preset.label}风格、${COLOR_MODE_LABELS[selectedMode]}，打开主题中心`,
+    );
+    document.querySelector('meta[name="theme-color"]').setAttribute("content", preset.colors[resolvedMode]);
+
+    for (const card of elements.themeCards) {
+      const selected = card.dataset.readingTheme === selectedTheme;
+      card.setAttribute("aria-checked", String(selected));
+      card.tabIndex = selected ? 0 : -1;
+    }
+    for (const button of elements.colorModeButtons) {
+      const selected = button.dataset.colorMode === selectedMode;
+      button.setAttribute("aria-checked", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+    }
+
+    if (persist) {
+      try {
+        localStorage.setItem(STORAGE.themeStyle, selectedTheme);
+        localStorage.setItem(STORAGE.colorMode, selectedMode);
+      } catch {
+        // The selected appearance still applies when storage is unavailable.
+      }
+    }
+  }
+
+  function initializeAppearance() {
+    let savedTheme = "";
+    let savedMode = "";
+    try {
+      savedTheme = localStorage.getItem(STORAGE.themeStyle) || "";
+      savedMode = localStorage.getItem(STORAGE.colorMode) || localStorage.getItem(STORAGE.legacyTheme) || "";
+    } catch {
+      // Fall back to the no-flash values already applied in the document head.
+    }
+    applyAppearance(
+      THEME_PRESETS[savedTheme] ? savedTheme : elements.root.dataset.readingTheme || "ink",
+      COLOR_MODES.has(savedMode) ? savedMode : elements.root.dataset.colorMode || "system",
+    );
+  }
+
+  function setThemePanel(open) {
+    elements.themePanel.hidden = !open;
+    elements.themeButton.setAttribute("aria-expanded", String(open));
+    elements.themeControl.classList.toggle("is-open", open);
+    if (open) setSearchPanel(false);
+  }
+
+  function bindRadioGroup(buttons, onSelect) {
+    buttons.forEach((button, index) => {
+      button.addEventListener("click", () => onSelect(button));
+      button.addEventListener("keydown", (event) => {
+        if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(event.key)) return;
+        event.preventDefault();
+        const offset = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1;
+        const next = buttons[(index + offset + buttons.length) % buttons.length];
+        next.focus();
+        next.click();
+      });
+    });
   }
 
   async function fetchJSON(url, options = {}) {
@@ -176,6 +265,86 @@
     }).format(date)}`;
   }
 
+  function libraryById(libraryId) {
+    return state.libraries.find((library) => library.id === libraryId) || null;
+  }
+
+  function libraryNodeById(libraryId) {
+    return state.nodes.find((node) => node.type === "library" && node.id === libraryId) || null;
+  }
+
+  function visibleTreeNodes() {
+    if (state.libraryFilter === "all") return state.nodes;
+    return libraryNodeById(state.libraryFilter)?.children || [];
+  }
+
+  function createSourceBadge(library, compact = false) {
+    const badge = document.createElement("span");
+    badge.className = `source-badge${compact ? " is-compact" : ""}`;
+    badge.dataset.sourceTone = String(Number(library?.tone) || 0);
+    const dot = document.createElement("i");
+    dot.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = library?.name || "文档来源";
+    badge.append(dot, label);
+    return badge;
+  }
+
+  function updateLibrarySummary() {
+    const selected = libraryById(state.libraryFilter);
+    const visibleCount = selected ? Number(selected.fileCount) || 0 : state.fileCount;
+    elements.libraryName.textContent = selected?.name || (state.libraries.length > 1 ? "全部文档" : state.config.rootName);
+    elements.fileCount.textContent = `${visibleCount} 篇文档${selected ? " · 当前来源" : state.libraries.length > 1 ? ` · ${state.libraries.length} 个来源` : ""}`;
+    elements.searchInput.placeholder = selected
+      ? `搜索 ${selected.name} 的标题与正文`
+      : "搜索全部来源的标题与正文";
+  }
+
+  function renderLibrarySources() {
+    elements.librarySources.replaceChildren();
+    elements.librarySources.hidden = state.libraries.length < 2;
+    if (state.libraries.length < 2) return;
+    const options = [{ id: "all", name: "全部", fileCount: state.fileCount }, ...state.libraries];
+    for (const library of options) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `library-source${library.id === state.libraryFilter ? " is-active" : ""}`;
+      button.setAttribute("aria-pressed", String(library.id === state.libraryFilter));
+      if (library.id !== "all") button.dataset.sourceTone = String(Number(library.tone) || 0);
+      const marker = document.createElement("span");
+      marker.className = library.id === "all" ? "source-all-mark" : "source-dot";
+      marker.setAttribute("aria-hidden", "true");
+      const name = document.createElement("span");
+      name.className = "library-source-name";
+      name.textContent = library.name;
+      const count = document.createElement("span");
+      count.className = "library-source-count";
+      count.textContent = String(Number(library.fileCount) || 0);
+      button.append(marker, name, count);
+      button.addEventListener("click", () => setLibraryFilter(library.id));
+      elements.librarySources.append(button);
+    }
+  }
+
+  async function setLibraryFilter(libraryId) {
+    const next = libraryId === "all" || libraryById(libraryId) ? libraryId : "all";
+    if (next === state.libraryFilter) return;
+    state.libraryFilter = next;
+    writeJSON(STORAGE.libraryFilter, next);
+    renderLibrarySources();
+    updateLibrarySummary();
+    renderSidebar();
+    const query = elements.searchInput.value.trim();
+    if (query) queueSearch(query);
+    if (next !== "all") {
+      const current = findFile(state.nodes, state.currentPath);
+      if (!current || current.libraryId !== next) {
+        const first = firstFile(visibleTreeNodes());
+        if (first) await loadDocument(first.path);
+      }
+    }
+  }
+
   function countFiles(nodes) {
     return nodes.reduce((total, node) => total + (node.type === "file" ? 1 : countFiles(node.children || [])), 0);
   }
@@ -192,7 +361,7 @@
   function findFile(nodes, path) {
     for (const node of nodes) {
       if (node.type === "file" && node.path === path) return node;
-      if (node.type === "folder") {
+      if (node.children) {
         const nested = findFile(node.children || [], path);
         if (nested) return nested;
       }
@@ -227,10 +396,15 @@
     label.textContent = node.name;
     text.append(label);
     if (quick) {
+      const detail = document.createElement("span");
+      detail.className = "quick-row-detail";
+      const library = libraryById(node.libraryId) || { name: node.libraryName, tone: node.libraryTone };
+      detail.append(createSourceBadge(library, true));
       const path = document.createElement("span");
       path.className = "quick-row-path";
-      path.textContent = node.path;
-      text.append(path);
+      path.textContent = node.relativePath || node.path;
+      detail.append(path);
+      text.append(detail);
     }
     row.append(icon, text);
     row.addEventListener("click", () => {
@@ -241,7 +415,9 @@
   }
 
   function renderQuickList(paths, emptyText) {
-    const available = paths.map((path) => findFile(state.nodes, path)).filter(Boolean);
+    const available = paths
+      .map((path) => findFile(state.nodes, path))
+      .filter((node) => node && (state.libraryFilter === "all" || node.libraryId === state.libraryFilter));
     if (!available.length) {
       const empty = document.createElement("p");
       empty.className = "tree-empty";
@@ -272,16 +448,42 @@
       renderQuickList([...state.favorites], "还没有收藏文档。点击文章标题旁的星标即可收藏。");
       return;
     }
-    if (!state.nodes.length) {
+    const treeNodes = visibleTreeNodes();
+    if (!treeNodes.length) {
       const empty = document.createElement("p");
       empty.className = "tree-empty";
-      empty.textContent = "目录里还没有 Markdown 文件。";
+      empty.textContent = state.libraryFilter === "all" ? "目录里还没有 Markdown 文件。" : "这个来源里还没有 Markdown 文件。";
       elements.fileTree.append(empty);
       return;
     }
 
     function appendNodes(parent, items) {
       for (const node of items) {
+        if (node.type === "library") {
+          const section = document.createElement("section");
+          section.className = "tree-library";
+          section.dataset.sourceTone = String(Number(node.tone) || 0);
+          const heading = document.createElement("div");
+          heading.className = "tree-library-heading";
+          heading.append(createSourceBadge({ name: node.name, tone: node.tone }));
+          const count = document.createElement("span");
+          count.className = "tree-library-count";
+          count.textContent = `${Number(node.fileCount) || 0} 篇`;
+          heading.append(count);
+          section.append(heading);
+          const children = document.createElement("div");
+          children.className = "tree-library-children";
+          appendNodes(children, node.children || []);
+          if (!node.children?.length) {
+            const empty = document.createElement("p");
+            empty.className = "tree-library-empty";
+            empty.textContent = "暂无文档";
+            children.append(empty);
+          }
+          section.append(children);
+          parent.append(section);
+          continue;
+        }
         if (node.type === "folder") {
           const group = document.createElement("div");
           group.className = "tree-group";
@@ -321,7 +523,7 @@
       }
     }
 
-    appendNodes(elements.fileTree, state.nodes);
+    appendNodes(elements.fileTree, treeNodes);
   }
 
   function updateFavoriteButton() {
@@ -381,6 +583,12 @@
     return parts;
   }
 
+  function splitLibraryPath(path) {
+    const match = path.match(/^(@[^/]+)(?:\/(.*))?$/);
+    if (!match || !libraryById(match[1].slice(1))) return { namespace: "", relative: path };
+    return { namespace: match[1], relative: match[2] || "" };
+  }
+
   function decodePath(value) {
     try {
       return decodeURIComponent(value);
@@ -390,8 +598,12 @@
   }
 
   function resolveLocalPath(currentPath, target) {
-    const cleanTarget = decodePath(target.split(/[?#]/, 1)[0]).replace(/\\/g, "/");
-    const parts = cleanTarget.startsWith("/") ? [] : directoryOf(currentPath);
+    let cleanTarget = decodePath(target.split(/[?#]/, 1)[0]).replace(/\\/g, "/");
+    const current = splitLibraryPath(currentPath);
+    const explicit = splitLibraryPath(cleanTarget);
+    const namespace = explicit.namespace || current.namespace;
+    if (explicit.namespace) cleanTarget = explicit.relative;
+    const parts = cleanTarget.startsWith("/") ? [] : directoryOf(current.relative);
     for (const part of cleanTarget.split("/")) {
       if (!part || part === ".") continue;
       if (part === "..") {
@@ -400,7 +612,8 @@
       }
       parts.push(part);
     }
-    return parts.join("/");
+    const relative = parts.join("/");
+    return namespace ? `${namespace}/${relative}` : relative;
   }
 
   function isExternal(value) {
@@ -503,7 +716,14 @@
     if (firstHeading) firstHeading.remove();
     elements.article.replaceChildren(...container.childNodes);
     elements.documentTitle.textContent = title;
-    elements.breadcrumb.textContent = file.path.split("/").join("  /  ");
+    const library = libraryById(file.libraryId) || { name: file.libraryName, tone: file.libraryTone };
+    elements.documentSource.dataset.sourceTone = String(Number(library.tone) || 0);
+    const sourceDot = document.createElement("i");
+    sourceDot.setAttribute("aria-hidden", "true");
+    const sourceName = document.createElement("span");
+    sourceName.textContent = library.name || "文档来源";
+    elements.documentSource.replaceChildren(sourceDot, sourceName);
+    elements.breadcrumb.textContent = (file.relativePath || file.path).split("/").join("  /  ");
     elements.documentTime.textContent = formatTime(file.mtime);
     elements.documentSize.textContent = formatBytes(file.size);
     prepareDocumentLinks(file.path);
@@ -583,6 +803,10 @@
     elements.searchPanel.hidden = !open;
   }
 
+  function searchScopeLabel() {
+    return libraryById(state.libraryFilter)?.name || "全部来源";
+  }
+
   function clearSearch({ focus = false } = {}) {
     window.clearTimeout(state.searchTimer);
     if (state.searchRequest) state.searchRequest.abort();
@@ -590,7 +814,7 @@
     state.searchSelection = -1;
     elements.searchInput.value = "";
     elements.searchResults.replaceChildren();
-    elements.searchSummary.textContent = "输入关键词搜索全部文档";
+    elements.searchSummary.textContent = `输入关键词搜索${searchScopeLabel()}文档`;
     setSearchPanel(false);
     if (focus) elements.searchInput.focus();
   }
@@ -628,10 +852,15 @@
       const heading = document.createElement("span");
       heading.className = "search-result-title";
       appendHighlightedText(heading, result.title || result.name, query);
+      const meta = document.createElement("span");
+      meta.className = "search-result-meta";
+      const library = libraryById(result.libraryId) || { name: result.libraryName, tone: result.libraryTone };
+      meta.append(createSourceBadge(library, true));
       const path = document.createElement("span");
       path.className = "search-result-path";
-      appendHighlightedText(path, result.path, query);
-      button.append(heading, path);
+      appendHighlightedText(path, result.relativePath || result.path, query);
+      meta.append(path);
+      button.append(heading, meta);
       if (result.snippet) {
         const snippet = document.createElement("span");
         snippet.className = "search-result-snippet";
@@ -651,11 +880,12 @@
     if (state.searchRequest) state.searchRequest.abort();
     const controller = new AbortController();
     state.searchRequest = controller;
-    elements.searchSummary.textContent = "正在搜索全部文档…";
+    elements.searchSummary.textContent = `正在搜索${searchScopeLabel()}文档…`;
     elements.searchResults.replaceChildren();
     setSearchPanel(true);
     try {
-      const data = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}&limit=30`, { signal: controller.signal });
+      const library = state.libraryFilter === "all" ? "" : `&library=${encodeURIComponent(state.libraryFilter)}`;
+      const data = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}&limit=30${library}`, { signal: controller.signal });
       if (elements.searchInput.value.trim() !== query) return;
       renderSearchResults(query, Array.isArray(data.results) ? data.results : []);
     } catch (error) {
@@ -691,7 +921,12 @@
       state.nodes = Array.isArray(data.nodes) ? data.nodes : [];
       state.fileCount = Number(data.fileCount) || 0;
       state.version = data.version || "";
-      elements.fileCount.textContent = `${state.fileCount} 篇文档`;
+      state.libraries = state.libraries.map((library) => {
+        const node = libraryNodeById(library.id);
+        return { ...library, fileCount: Number(node?.fileCount) || 0 };
+      });
+      renderLibrarySources();
+      updateLibrarySummary();
       elements.syncText.textContent = "已同步";
       elements.syncText.title = `${new Date().toLocaleTimeString("zh-CN")} · 索引 ${Number(data.indexedCount) || 0} 篇 · 扫描 ${Number(data.scanMs) || 0} ms`;
 
@@ -703,16 +938,24 @@
         return;
       }
 
-      let current = state.currentPath ? findFile(state.nodes, state.currentPath) : null;
-      if (!current) {
-        const requested = new URL(location.href).searchParams.get("doc");
-        current = requested ? findFile(state.nodes, requested) : null;
+      const requested = new URL(location.href).searchParams.get("doc");
+      let current = null;
+      if (initial && requested) {
+        current = findFile(state.nodes, requested);
+        if (current && state.libraryFilter !== "all" && current.libraryId !== state.libraryFilter) {
+          state.libraryFilter = current.libraryId;
+          writeJSON(STORAGE.libraryFilter, state.libraryFilter);
+          renderLibrarySources();
+          updateLibrarySummary();
+        }
       }
+      const visibleNodes = visibleTreeNodes();
+      if (!current && state.currentPath) current = findFile(visibleNodes, state.currentPath);
       if (!current) {
         const lastPath = localStorage.getItem(STORAGE.lastPath) || "";
-        current = lastPath ? findFile(state.nodes, lastPath) : null;
+        current = lastPath ? findFile(visibleNodes, lastPath) : null;
       }
-      if (!current) current = firstFile(state.nodes);
+      if (!current) current = firstFile(visibleNodes);
 
       if (changed || initial) renderSidebar();
       if (!current) return;
@@ -742,7 +985,23 @@
   }
 
   function bindEvents() {
-    elements.themeButton.addEventListener("click", () => applyTheme(elements.root.dataset.theme === "dark" ? "light" : "dark"));
+    elements.themeButton.addEventListener("click", () => setThemePanel(elements.themePanel.hidden));
+    bindRadioGroup(elements.themeCards, (card) => {
+      const nextTheme = card.dataset.readingTheme || "ink";
+      applyAppearance(nextTheme, state.colorMode);
+      showToast(`已切换到 ${THEME_PRESETS[nextTheme].label} 风格`);
+    });
+    bindRadioGroup(elements.colorModeButtons, (button) => {
+      const nextMode = button.dataset.colorMode || "system";
+      applyAppearance(state.readingTheme, nextMode);
+      showToast(`明暗模式：${COLOR_MODE_LABELS[nextMode]}`);
+    });
+    const followSystem = () => {
+      if (state.colorMode === "system") applyAppearance(state.readingTheme, state.colorMode, false);
+    };
+    if (typeof systemColorQuery.addEventListener === "function") systemColorQuery.addEventListener("change", followSystem);
+    else systemColorQuery.addListener(followSystem);
+
     elements.favoriteButton.addEventListener("click", toggleFavorite);
     elements.readerPane.addEventListener("scroll", scheduleScrollSave, { passive: true });
     window.addEventListener("pagehide", () => persistScroll());
@@ -772,8 +1031,13 @@
     elements.clearSearchButton.addEventListener("click", () => clearSearch({ focus: true }));
     document.addEventListener("pointerdown", (event) => {
       if (!elements.searchPanel.contains(event.target) && !elements.searchInput.contains(event.target)) setSearchPanel(false);
+      if (!elements.themeControl.contains(event.target)) setThemePanel(false);
     });
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !elements.themePanel.hidden) {
+        setThemePanel(false);
+        elements.themeButton.focus();
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "k") {
         event.preventDefault();
         elements.searchInput.focus();
@@ -803,17 +1067,30 @@
     });
     window.addEventListener("popstate", () => {
       const requested = new URL(location.href).searchParams.get("doc");
-      if (requested && requested !== state.currentPath && findFile(state.nodes, requested)) loadDocument(requested);
+      const target = requested ? findFile(state.nodes, requested) : null;
+      if (target && requested !== state.currentPath) {
+        if (state.libraryFilter !== "all" && state.libraryFilter !== target.libraryId) {
+          state.libraryFilter = target.libraryId;
+          writeJSON(STORAGE.libraryFilter, state.libraryFilter);
+          renderLibrarySources();
+          updateLibrarySummary();
+          renderSidebar();
+        }
+        loadDocument(requested);
+      }
     });
   }
 
   async function initialize() {
-    initializeTheme();
+    initializeAppearance();
     bindEvents();
     setReaderState("loading");
     try {
       state.config = await fetchJSON("/api/config");
-      elements.libraryName.textContent = state.config.rootName;
+      state.libraries = Array.isArray(state.config.libraries) ? state.config.libraries : [];
+      if (state.libraryFilter !== "all" && !libraryById(state.libraryFilter)) state.libraryFilter = "all";
+      renderLibrarySources();
+      updateLibrarySummary();
       document.title = state.config.title;
       await refreshTree({ initial: true });
       window.setInterval(() => refreshTree(), Math.max(800, Number(state.config.pollMs) || 2200));

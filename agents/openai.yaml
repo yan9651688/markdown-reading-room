@@ -1,4 +1,4 @@
 interface:
   display_name: "墨阅 Markdown 阅读室"
-  short_description: "把本地 Markdown 目录部署为可全文搜索的清爽阅读站"
-  default_prompt: "使用 $serve-markdown-library 为指定目录部署一个可搜索并记忆阅读状态的 Markdown 阅读站。"
+  short_description: "帮助发现目录，把多个 Agent 的 Markdown 汇成文档书架"
+  default_prompt: "使用 $serve-markdown-library 帮我找到常见 Agent 文档目录，确认后部署为可按来源切换和跨库搜索的书架。"

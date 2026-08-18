@@ -22,15 +22,56 @@ class FrontendContractTests(unittest.TestCase):
     def test_v02_interaction_contract_is_present(self) -> None:
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         javascript = (STATIC / "app.js").read_text(encoding="utf-8")
-        self.assertIn("搜索标题、路径和正文", html)
+        self.assertIn("搜索全部来源的标题与正文", html)
         self.assertIn('data-library-view="recent"', html)
         self.assertIn('data-library-view="favorites"', html)
         self.assertIn("md-reader-scroll-positions", javascript)
         self.assertIn("/api/search", javascript)
 
+    def test_v03_theme_center_contract_is_present(self) -> None:
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        appearance = (STATIC / "appearance.js").read_text(encoding="utf-8")
+        stylesheet = (STATIC / "app.css").read_text(encoding="utf-8")
+        self.assertEqual(html.count('class="theme-card"'), 5)
+        for theme in ("ink", "github", "notion", "codex", "claude"):
+            self.assertIn(f'data-reading-theme="{theme}"', html)
+            self.assertIn(f':root[data-reading-theme="{theme}"]', stylesheet)
+            self.assertIn(f':root[data-reading-theme="{theme}"][data-theme="dark"]', stylesheet)
+        for mode in ("system", "light", "dark"):
+            self.assertIn(f'data-color-mode="{mode}"', html)
+        self.assertIn("md-reader-theme-style", javascript)
+        self.assertIn("md-reader-color-mode", javascript)
+        self.assertIn("prefers-color-scheme: dark", appearance)
+        self.assertIn('.theme-card[data-reading-theme]', javascript)
+        self.assertLess(html.index('<script src="/appearance.js"'), html.index('<link rel="stylesheet"'))
+
+    def test_v04_multi_library_contract_is_present(self) -> None:
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        stylesheet = (STATIC / "app.css").read_text(encoding="utf-8")
+        self.assertIn('id="librarySources"', html)
+        self.assertIn('id="documentSource"', html)
+        self.assertIn("md-reader-library-filter", javascript)
+        self.assertIn("library=${encodeURIComponent(state.libraryFilter)}", javascript)
+        self.assertIn('node.type === "library"', javascript)
+        self.assertIn("splitLibraryPath", javascript)
+        self.assertIn(".library-source", stylesheet)
+        self.assertIn(".tree-library-heading", stylesheet)
+        self.assertIn('[data-source-tone="7"]', stylesheet)
+
+    def test_v041_release_label_is_consistent(self) -> None:
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        server = (ROOT / "assets" / "app" / "server.py").read_text(encoding="utf-8")
+        deployer = (ROOT / "scripts" / "deploy.py").read_text(encoding="utf-8")
+        for source in (html, javascript, server, deployer):
+            self.assertIn("0.4.1", source)
+
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_javascript_syntax(self) -> None:
-        subprocess.run(["node", "--check", str(STATIC / "app.js")], check=True)
+        for script in ("appearance.js", "app.js"):
+            subprocess.run(["node", "--check", str(STATIC / script)], check=True)
 
 
 if __name__ == "__main__":
