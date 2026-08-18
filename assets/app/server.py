@@ -98,6 +98,9 @@ class AppConfig:
     extensions: frozenset[str]
     excludes: frozenset[str]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", self.root.expanduser().resolve())
+
     def safe_path(self, relative: str) -> Path:
         normalized = unquote(relative).replace("\\", "/").lstrip("/")
         if any(part in self.excludes for part in Path(normalized).parts):

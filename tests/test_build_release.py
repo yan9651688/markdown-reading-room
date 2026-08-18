@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,11 +16,14 @@ class BuildReleaseTests(unittest.TestCase):
     def test_release_contains_only_runtime_skill_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "skill.zip"
+            environment = os.environ.copy()
+            environment["PYTHONIOENCODING"] = "ascii"
             subprocess.run(
                 [sys.executable, str(ROOT / "scripts" / "build_release.py"), "--output", str(output)],
                 check=True,
                 capture_output=True,
                 text=True,
+                env=environment,
             )
             with zipfile.ZipFile(output) as archive:
                 names = archive.namelist()

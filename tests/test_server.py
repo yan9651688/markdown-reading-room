@@ -35,6 +35,7 @@ class LibraryIndexTests(unittest.TestCase):
             extensions=frozenset({".md"}),
             excludes=frozenset(reader_server.DEFAULT_EXCLUDES),
         )
+        self.assertEqual(self.config.root, self.root.resolve())
         self.index = reader_server.LibraryIndex(self.config)
         self.index.refresh()
 

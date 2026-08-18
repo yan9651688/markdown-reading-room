@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -14,6 +15,14 @@ SKILL_DIR = Path(__file__).resolve().parents[1]
 APP_TEMPLATE = SKILL_DIR / "assets" / "app"
 MARKER_NAME = ".markdown-reader-install.json"
 APP_VERSION = "0.2.0"
+
+
+def configure_console() -> None:
+    try:
+        sys.stdout.reconfigure(errors="replace")
+        sys.stderr.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 
 def write_text(path: Path, content: str) -> None:
@@ -33,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    configure_console()
     args = build_parser().parse_args()
     content = args.content.expanduser().resolve()
     output = args.output.expanduser().resolve()

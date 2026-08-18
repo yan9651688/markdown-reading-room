@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import zipfile
 from pathlib import Path
 
@@ -20,6 +21,14 @@ EXCLUDED_PARTS = {"__pycache__", ".DS_Store", "Thumbs.db"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
 
+def configure_console() -> None:
+    try:
+        sys.stdout.reconfigure(errors="replace")
+        sys.stderr.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def is_release_file(path: Path) -> bool:
     relative = path.relative_to(REPO_ROOT)
     return path.is_file() and not any(part in EXCLUDED_PARTS for part in relative.parts) and path.suffix not in EXCLUDED_SUFFIXES
@@ -33,6 +42,7 @@ def iter_release_files() -> list[Path]:
 
 
 def main() -> int:
+    configure_console()
     parser = argparse.ArgumentParser(description="构建可分发的 Markdown 阅读室 Skill ZIP")
     parser.add_argument("--output", type=Path, default=REPO_ROOT / "dist" / "Markdown阅读室-Skill.zip")
     args = parser.parse_args()

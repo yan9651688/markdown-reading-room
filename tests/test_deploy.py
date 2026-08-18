@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,8 @@ class DeployTests(unittest.TestCase):
             output = base / "reader"
             content.mkdir()
             (content / "欢迎.md").write_text("# 欢迎", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["PYTHONIOENCODING"] = "ascii"
             subprocess.run(
                 [
                     sys.executable,
@@ -35,6 +38,7 @@ class DeployTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
                 text=True,
+                env=environment,
             )
             config = json.loads((output / "reader.json").read_text(encoding="utf-8"))
             marker = json.loads((output / ".markdown-reader-install.json").read_text(encoding="utf-8"))
