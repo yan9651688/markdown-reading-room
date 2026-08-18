@@ -1,10 +1,34 @@
 # 墨阅 Markdown 阅读室
 
+[![Latest Release](https://img.shields.io/github/v/release/yan9651688/markdown-reading-room?display_name=tag&sort=semver)](https://github.com/yan9651688/markdown-reading-room/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb)](https://github.com/yan9651688/markdown-reading-room/releases/latest)
+[![CI](https://github.com/yan9651688/markdown-reading-room/actions/workflows/ci.yml/badge.svg)](https://github.com/yan9651688/markdown-reading-room/actions/workflows/ci.yml)
+
 一个清爽、只读、本地优先的 Markdown 文档阅读器，同时提供网页端和 Windows 桌面端。
 
 它把一个或多个文件夹中的 Markdown 文件组织成统一网页书架，提供来源切换、分级目录、跨库正文搜索、阅读状态记忆、实时刷新和可扩展主题中心。
 
 适合集中查看 Codex、Claude Code 或其他 Agent 生成的大量 `.md` 文件，不需要移动原文件。
+
+## 下载
+
+**普通用户请前往 [GitHub Releases](https://github.com/yan9651688/markdown-reading-room/releases/latest) 下载，无需安装 Python、Node.js 或 Rust。**
+
+| 文件 | 适用场景 | 使用方式 |
+| --- | --- | --- |
+| [Moyue-Setup.exe](https://github.com/yan9651688/markdown-reading-room/releases/latest/download/Moyue-Setup.exe) | Windows 10/11 x64，推荐 | 双击安装，之后从开始菜单打开墨阅 |
+| [Moyue-Portable.zip](https://github.com/yan9651688/markdown-reading-room/releases/latest/download/Moyue-Portable.zip) | 免安装、U 盘携带 | 解压后双击 `Moyue.exe` |
+| [release-manifest.json](https://github.com/yan9651688/markdown-reading-room/releases/latest/download/release-manifest.json) | 校验下载文件 | 查看文件大小与 SHA-256 |
+
+也可以在[全部版本页面](https://github.com/yan9651688/markdown-reading-room/releases)查看历史版本和更新说明。Release 页面自动附带的 `Source code` 是开发者源码，不是 Windows 安装包。
+
+> 当前 Windows 预览版尚未进行商业代码签名。首次运行时如果出现 Microsoft Defender SmartScreen 提示，请先确认下载地址来自本仓库的 Releases 页面。
+
+## 三步开始阅读
+
+1. 安装 `Moyue-Setup.exe`，或者解压便携版。
+2. 打开墨阅，点击“添加目录”，选择一个或多个存放 Markdown 的文件夹。
+3. 在左侧书架切换来源和文档，即可搜索、收藏并继续上次阅读位置。
 
 ![墨阅界面预览](docs/preview.png)
 
@@ -30,9 +54,9 @@
 
 > GitHub、Notion、Codex 与 Claude 风格是针对阅读场景设计的主题灵感，并非对应产品的官方主题。
 
-## Windows 桌面版
+## Windows 桌面版开发构建
 
-普通用户运行发行包中的 `Moyue-Setup.exe` 即可安装。安装后的主程序名为 `Moyue.exe`。首次打开时点击“添加目录”，选择一个或多个 Markdown 文件夹；选择结果会保存在当前用户的应用配置目录中。桌面版使用 Rust 扫描、索引和搜索文档，不依赖 Python。
+以下内容面向希望从源码构建墨阅的开发者。普通用户直接从 [Releases](https://github.com/yan9651688/markdown-reading-room/releases/latest) 下载即可。
 
 开发者在 Windows 10/11 上构建安装版和便携版：
 
@@ -131,7 +155,7 @@ python scripts/build_release.py
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-每次推送和 Pull Request 会在 Windows、macOS、Linux 上运行网页端测试，并在 Windows 上验证桌面构建。推送 `v*` 标签后，GitHub Actions 会生成 Skill ZIP 和 Windows 发行包。
+每次推送和 Pull Request 会在 Windows、macOS、Linux 上运行网页端测试，并在 Windows 上验证桌面构建。推送 `v*` 标签后，GitHub Actions 会创建对应的 [Release](https://github.com/yan9651688/markdown-reading-room/releases)，并上传 Windows 安装版、便携版、校验清单和兼容 Agent Skill 的 ZIP。
 
 ## 安全边界
 
