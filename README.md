@@ -4,9 +4,9 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb)](https://github.com/yan9651688/markdown-reading-room/releases/latest)
 [![CI](https://github.com/yan9651688/markdown-reading-room/actions/workflows/ci.yml/badge.svg)](https://github.com/yan9651688/markdown-reading-room/actions/workflows/ci.yml)
 
-一个清爽、只读、本地优先的 Markdown 文档阅读器，同时提供网页端和 Windows 桌面端。
+一个面向 Agent 时代的本地成果收件箱，同时提供网页端和 Windows 桌面端。
 
-它把一个或多个文件夹中的 Markdown 文件组织成统一网页书架，提供来源切换、分级目录、跨库正文搜索、阅读状态记忆、实时刷新和可扩展主题中心。
+它把一个或多个文件夹中的 Markdown 交付物组织成统一阅读入口：自动区分来源与新增/更新，提供待处理、阅读中、需跟进和已确认状态，同时保留分级目录、跨库搜索、阅读记忆、实时刷新和主题中心。
 
 适合集中查看 Codex、Claude Code 或其他 Agent 生成的大量 `.md` 文件，不需要移动原文件。
 
@@ -27,16 +27,33 @@
 ## 三步开始阅读
 
 1. 安装 `Moyue-Setup.exe`，或者解压便携版。
-2. 打开墨阅，点击“添加目录”，选择一个或多个存放 Markdown 的文件夹。
-3. 在左侧书架切换来源和文档，即可搜索、收藏并继续上次阅读位置。
+2. 第一次打开时，墨阅会只读检查常见位置；确认候选目录后，点击“添加 N 个目录”。
+3. 新增和更新的文档会进入“文档更新”，可直接阅读、搜索并确认当前版本。
+
+如果自动发现没有找到目标，可以点“扫描指定位置”，选择 `Documents`、某个工作区或项目父目录；已经知道位置时，也可以点“直接添加目录”。
+
+### 墨阅会建议哪些目录
+
+| 类型 | 常见位置 | 界面如何处理 |
+| --- | --- | --- |
+| Agent Skills | `~/.codex/skills`、`~/.claude/skills`、`~/.agents/skills` 等 | 作为高可信来源预先勾选 |
+| Codex 本地记忆 | `~/.codex/memories` | 显示 Markdown 数量并说明来源 |
+| 项目成果 | `Documents`、`Desktop`、`Projects`、`Workspace`、OneDrive | 识别 README、AGENTS、docs、notes 等项目信号，交给用户确认 |
+| 自定义工作区 | 用户选择的任意父目录 | 只在所选范围内继续寻找候选项目 |
+
+发现阶段只读取目录结构与 Markdown 数量；只有确认加入后，目录才会进入本地书架和正文索引。
 
 ![墨阅界面预览](docs/preview.png)
 
 ## 主要功能
 
+- Agent 成果收件箱，按最近活动统一呈现跨目录交付物
+- 自动识别 Codex、Claude、Cursor、Windsurf、OpenCode、Gemini 等来源，未知来源安全回退为本地文档
+- 记录新增与更新，文档变化后会自动回到待验收状态
+- 待处理、阅读中、需跟进、已确认四种状态；元数据仅保存在墨阅本机，不修改原文件
 - 递归读取 `.md`、`.markdown`、`.mdown` 和 `.mkd`
 - 同时挂载多个本地目录，按 Codex、Claude 等来源分组和筛选
-- 用户不知道路径时，只读检查常见 Agent 目录并给出候选与参考位置
+- 首次启动自动只读发现常见 Agent、Skills、记忆和项目目录，展示推荐原因、Markdown 数量与参考路径
 - 跨文档库搜索标题、路径和正文，也可只搜索当前来源
 - 不同来源中的同名、同路径文件彼此隔离
 - 左侧分级目录、最近阅读、收藏与折叠状态保存
@@ -163,6 +180,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - 服务只读取配置目录中的文件，不修改、移动或删除 Markdown
 - 每个文档来源分别进行根目录边界校验，不能通过链接或路径跳到其他位置
 - 桌面端只为用户明确选择的目录动态开放本地资源读取权限
+- 自动发现阶段只检查目录结构、项目标识与 Markdown 数量，候选目录必须由用户确认后才加入书架
 - 忽略 `.git`、`.venv`、`node_modules` 等目录
 - 资源接口限制可访问的文件类型和路径范围
 - 当前版本不包含账号系统，不应直接暴露到公网
@@ -171,6 +189,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 - [CHANGELOG.md](CHANGELOG.md)：已经完成的版本变化
 - [ROADMAP.md](ROADMAP.md)：方向性规划与候选版本，不代表固定排期
+- [docs/PRODUCT_STRATEGY.md](docs/PRODUCT_STRATEGY.md)：竞品研究、产品定位与壁垒路线
 - [AGENTS.md](AGENTS.md)：代码贡献与验证规范
 
 欢迎通过 Issue 提交使用场景和改进建议。

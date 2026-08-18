@@ -178,6 +178,7 @@ class HttpApiTests(unittest.TestCase):
         config = self.get_json("/api/config")
         self.assertTrue(config["features"]["themeCenter"])
         self.assertTrue(config["features"]["multiLibrary"])
+        self.assertTrue(config["features"]["artifactInbox"])
         self.assertEqual(config["libraries"][0]["id"], "main")
         self.assertEqual(self.get_json("/api/tree")["fileCount"], 1)
         query = urllib.parse.quote("搜索命中")
@@ -250,6 +251,7 @@ class MultiLibraryHttpApiTests(unittest.TestCase):
     def test_source_metadata_filter_and_namespaced_file_endpoint(self) -> None:
         config = self.get_json("/api/config")
         self.assertEqual([item["name"] for item in config["libraries"]], ["Codex", "Claude"])
+        self.assertEqual([item["agentKind"] for item in config["libraries"]], ["codex", "claude"])
         query = urllib.parse.quote("跨库命中")
         results = self.get_json(f"/api/search?q={query}")["results"]
         self.assertEqual({result["libraryId"] for result in results}, {"codex", "claude"})

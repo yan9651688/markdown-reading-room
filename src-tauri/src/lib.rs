@@ -18,8 +18,25 @@ const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SEARCH_QUERY: usize = 120;
 const MAX_SEARCH_RESULTS: usize = 50;
+const MAX_DISCOVERY_CANDIDATES: usize = 80;
 const SOURCE_TONE_COUNT: u8 = 8;
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd"];
+const PROJECT_MARKER_FILES: &[&str] = &[
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "README.md",
+    "package.json",
+    "pyproject.toml",
+];
+const PROJECT_MARKER_DIRECTORIES: &[&str] = &[
+    ".git",
+    ".codex",
+    ".claude",
+    "docs",
+    "documentation",
+    "notes",
+];
 const ASSET_EXTENSIONS: &[&str] = &[
     "avif", "bmp", "csv", "docx", "gif", "ico", "jpeg", "jpg", "json", "m4a", "mp3", "mp4", "ogg",
     "pdf", "png", "pptx", "svg", "txt", "wav", "webm", "webp", "xlsx", "zip",
@@ -27,10 +44,17 @@ const ASSET_EXTENSIONS: &[&str] = &[
 const EXCLUDED_DIRECTORIES: &[&str] = &[
     ".git",
     ".hg",
+    ".next",
     ".svn",
+    ".tools",
     ".venv",
     "node_modules",
     "__pycache__",
+    "build",
+    "dist",
+    "site-packages",
+    "target",
+    "venv",
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -90,6 +114,7 @@ struct LibrarySummary {
     id: String,
     name: String,
     tone: u8,
+    agent_kind: String,
     file_count: u64,
     primary: bool,
 }
@@ -156,6 +181,54 @@ struct SearchPayload {
     results: Vec<SearchResult>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibrarySelection {
+    name: String,
+    path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoveryCandidate {
+    name: String,
+    path: String,
+    markdown_count: u64,
+    confidence: String,
+    kind: String,
+    reason: String,
+    agent_kind: String,
+    truncated: bool,
+    already_added: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoveryReference {
+    name: String,
+    path: String,
+    exists: bool,
+    markdown_count: u64,
+    hint: String,
+    truncated: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoveryPayload {
+    format: u8,
+    read_only: bool,
+    scoped: bool,
+    candidates: Vec<DiscoveryCandidate>,
+    references: Vec<DiscoveryReference>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MarkdownCount {
+    count: u64,
+    truncated: bool,
+}
+
 #[derive(Default)]
 struct DesktopState {
     libraries: Vec<LibrarySource>,
@@ -176,11 +249,22 @@ fn state_lock(state: &AppState) -> Result<MutexGuard<'_, DesktopState>, String> 
 }
 
 fn comparable_path(path: &Path) -> String {
-    let value = path.to_string_lossy().replace('\\', "/");
+    let value = display_path(path).replace('\\', "/");
     if cfg!(windows) {
         value.to_lowercase()
     } else {
         value
+    }
+}
+
+fn display_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = value.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        value.to_string()
     }
 }
 
@@ -277,13 +361,442 @@ fn save_libraries(path: &Path, libraries: &[LibrarySource]) -> Result<(), String
     fs::write(path, format!("{text}\n")).map_err(|error| format!("无法保存桌面配置：{error}"))
 }
 
-fn is_excluded(path: &Path) -> bool {
-    path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy();
-        EXCLUDED_DIRECTORIES
-            .iter()
-            .any(|excluded| value == *excluded)
+fn is_excluded_name(name: &std::ffi::OsStr) -> bool {
+    let value = name.to_string_lossy().to_ascii_lowercase();
+    EXCLUDED_DIRECTORIES
+        .iter()
+        .any(|excluded| value == *excluded)
+}
+
+fn count_markdown_bounded(
+    root: &Path,
+    max_depth: usize,
+    max_directories: usize,
+    max_entries: usize,
+    max_markdown: u64,
+) -> MarkdownCount {
+    if !root.is_dir() {
+        return MarkdownCount::default();
+    }
+    let mut result = MarkdownCount::default();
+    let mut directories = 0usize;
+    let mut entries_seen = 0usize;
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+
+    'walk: while let Some((directory, depth)) = stack.pop() {
+        directories += 1;
+        if directories > max_directories {
+            result.truncated = true;
+            break;
+        }
+        let entries = match fs::read_dir(&directory) {
+            Ok(values) => values,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            entries_seen += 1;
+            if entries_seen > max_entries {
+                result.truncated = true;
+                break 'walk;
+            }
+            if is_excluded_name(&entry.file_name()) {
+                continue;
+            }
+            let file_type = match entry.file_type() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_file()
+                && MARKDOWN_EXTENSIONS.contains(&extension(&entry.path()).as_str())
+            {
+                result.count += 1;
+                if result.count >= max_markdown {
+                    result.truncated = true;
+                    break 'walk;
+                }
+            } else if file_type.is_dir() && depth < max_depth {
+                stack.push((entry.path(), depth + 1));
+            }
+        }
+    }
+    result
+}
+
+fn has_direct_markdown(directory: &Path) -> bool {
+    let entries = match fs::read_dir(directory) {
+        Ok(values) => values,
+        Err(_) => return false,
+    };
+    entries.flatten().any(|entry| {
+        if is_excluded_name(&entry.file_name()) {
+            return false;
+        }
+        entry
+            .file_type()
+            .map(|value| {
+                !value.is_symlink()
+                    && value.is_file()
+                    && MARKDOWN_EXTENSIONS.contains(&extension(&entry.path()).as_str())
+            })
+            .unwrap_or(false)
     })
+}
+
+fn project_signal(directory: &Path) -> Option<&'static str> {
+    if PROJECT_MARKER_FILES
+        .iter()
+        .any(|marker| directory.join(marker).is_file())
+    {
+        return Some("包含 README、AGENTS 等项目标识文件");
+    }
+    for marker in PROJECT_MARKER_DIRECTORIES {
+        let path = directory.join(marker);
+        if !path.is_dir() {
+            continue;
+        }
+        if matches!(*marker, ".git" | ".codex" | ".claude") {
+            return Some("包含 Agent 或代码项目标识目录");
+        }
+        if count_markdown_bounded(&path, 3, 300, 4_000, 1).count > 0 {
+            return Some("包含 docs、notes 等 Markdown 文档目录");
+        }
+    }
+    has_direct_markdown(directory).then_some("目录中直接存在 Markdown 文档")
+}
+
+fn is_reader_package(directory: &Path) -> bool {
+    directory.join("SKILL.md").is_file()
+        && directory.join("scripts").join("deploy.py").is_file()
+        && directory
+            .join("assets")
+            .join("app")
+            .join("server.py")
+            .is_file()
+}
+
+fn project_roots(search_root: &Path, include_root: bool) -> Vec<(PathBuf, &'static str)> {
+    if !search_root.is_dir() {
+        return Vec::new();
+    }
+    let mut queue = vec![(search_root.to_path_buf(), 0usize)];
+    let mut cursor = 0usize;
+    let mut visited = HashSet::new();
+    let mut roots = Vec::new();
+
+    while cursor < queue.len() && cursor < 1_200 && roots.len() < MAX_DISCOVERY_CANDIDATES {
+        let (directory, depth) = queue[cursor].clone();
+        cursor += 1;
+        if !visited.insert(comparable_path(&directory)) || is_reader_package(&directory) {
+            continue;
+        }
+        if include_root || depth > 0 {
+            if let Some(signal) = project_signal(&directory) {
+                roots.push((directory.clone(), signal));
+                continue;
+            }
+        }
+        if depth >= 2 {
+            continue;
+        }
+        let mut children = match fs::read_dir(&directory) {
+            Ok(values) => values
+                .flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name();
+                    if is_excluded_name(&name) || name.to_string_lossy().starts_with('.') {
+                        return None;
+                    }
+                    entry
+                        .file_type()
+                        .ok()
+                        .filter(|value| value.is_dir() && !value.is_symlink())
+                        .map(|_| entry.path())
+                })
+                .collect::<Vec<_>>(),
+            Err(_) => continue,
+        };
+        children.sort_by_key(|path| path.file_name().map(|value| value.to_ascii_lowercase()));
+        queue.extend(children.into_iter().map(|path| (path, depth + 1)));
+    }
+    roots
+}
+
+fn user_home() -> Option<PathBuf> {
+    for key in ["USERPROFILE", "HOME"] {
+        if let Some(value) = std::env::var_os(key) {
+            let path = PathBuf::from(value);
+            if path.is_dir() {
+                return Some(path);
+            }
+        }
+    }
+    match (std::env::var_os("HOMEDRIVE"), std::env::var_os("HOMEPATH")) {
+        (Some(drive), Some(path)) => Some(PathBuf::from(drive).join(path)),
+        _ => None,
+    }
+}
+
+fn known_agent_locations(
+    home: &Path,
+) -> Vec<(
+    &'static str,
+    PathBuf,
+    &'static str,
+    &'static str,
+    &'static str,
+)> {
+    vec![
+        (
+            "Codex Skills",
+            home.join(".codex").join("skills"),
+            "Codex 常见技能目录",
+            "skills",
+            "codex",
+        ),
+        (
+            "Codex Memories",
+            home.join(".codex").join("memories"),
+            "Codex 的本地记忆和工作摘要",
+            "memory",
+            "codex",
+        ),
+        (
+            "Claude Skills",
+            home.join(".claude").join("skills"),
+            "Claude Code 常见技能目录",
+            "skills",
+            "claude",
+        ),
+        (
+            "通用 Agent Skills",
+            home.join(".agents").join("skills"),
+            "多个 Agent 可共用的技能目录",
+            "skills",
+            "agent",
+        ),
+        (
+            "Gemini Skills",
+            home.join(".gemini").join("skills"),
+            "Gemini 常见技能目录",
+            "skills",
+            "gemini",
+        ),
+        (
+            "Cursor Rules",
+            home.join(".cursor").join("rules"),
+            "Cursor 常见规则目录",
+            "rules",
+            "cursor",
+        ),
+        (
+            "Windsurf Rules",
+            home.join(".windsurf").join("rules"),
+            "Windsurf 常见规则目录",
+            "rules",
+            "windsurf",
+        ),
+    ]
+}
+
+fn common_reference_locations(home: &Path, cwd: &Path) -> Vec<(String, PathBuf, String)> {
+    let mut values = vec![
+        (
+            "当前工作目录".to_string(),
+            cwd.to_path_buf(),
+            "Agent 当前处理的项目可能位于这里".to_string(),
+        ),
+        (
+            "Documents".to_string(),
+            home.join("Documents"),
+            "项目文档和工作资料的常见位置".to_string(),
+        ),
+        (
+            "Desktop".to_string(),
+            home.join("Desktop"),
+            "临时项目和 Agent 导出内容的常见位置".to_string(),
+        ),
+        (
+            "Projects".to_string(),
+            home.join("Projects"),
+            "代码项目的常见位置".to_string(),
+        ),
+        (
+            "Workspace".to_string(),
+            home.join("Workspace"),
+            "开发工作区的常见位置".to_string(),
+        ),
+    ];
+    if let Some(one_drive) = std::env::var_os("OneDrive").or_else(|| std::env::var_os("ONEDRIVE")) {
+        let root = PathBuf::from(one_drive);
+        values.push((
+            "OneDrive Documents".to_string(),
+            root.join("Documents"),
+            "OneDrive 同步文档目录".to_string(),
+        ));
+        values.push((
+            "OneDrive Desktop".to_string(),
+            root.join("Desktop"),
+            "OneDrive 同步桌面目录".to_string(),
+        ));
+    }
+    values
+}
+
+fn discovery_reference(
+    name: String,
+    path: PathBuf,
+    hint: String,
+    depth: usize,
+) -> DiscoveryReference {
+    let exists = path.is_dir();
+    let count = if exists {
+        count_markdown_bounded(&path, depth, 1_200, 20_000, 5_000)
+    } else {
+        MarkdownCount::default()
+    };
+    DiscoveryReference {
+        name,
+        path: display_path(&path),
+        exists,
+        markdown_count: count.count,
+        hint,
+        truncated: count.truncated,
+    }
+}
+
+fn discover_sources(
+    home: &Path,
+    cwd: &Path,
+    scan_root: Option<&Path>,
+    existing_roots: &HashSet<String>,
+) -> DiscoveryPayload {
+    let scoped = scan_root.is_some();
+    let mut candidates = HashMap::<String, DiscoveryCandidate>::new();
+    let mut references = HashMap::<String, DiscoveryReference>::new();
+    let mut search_roots = Vec::<(PathBuf, String, bool)>::new();
+
+    if let Some(root) = scan_root {
+        let path = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let reference = discovery_reference(
+            "所选扫描范围".to_string(),
+            path.clone(),
+            "只在你选择的范围内寻找 Markdown 项目".to_string(),
+            5,
+        );
+        references.insert(comparable_path(&path), reference);
+        search_roots.push((path, "你选择的扫描范围".to_string(), true));
+    } else {
+        for (name, path, reason, kind, agent_kind) in known_agent_locations(home) {
+            let reference =
+                discovery_reference(name.to_string(), path.clone(), reason.to_string(), 8);
+            let key = comparable_path(&path);
+            if reference.markdown_count > 0 {
+                candidates.insert(
+                    key.clone(),
+                    DiscoveryCandidate {
+                        name: name.to_string(),
+                        path: reference.path.clone(),
+                        markdown_count: reference.markdown_count,
+                        confidence: "high".to_string(),
+                        kind: kind.to_string(),
+                        reason: reason.to_string(),
+                        agent_kind: agent_kind.to_string(),
+                        truncated: reference.truncated,
+                        already_added: existing_roots.contains(&key),
+                    },
+                );
+            }
+            references.insert(key, reference);
+        }
+        for (name, path, hint) in common_reference_locations(home, cwd) {
+            if is_reader_package(&path) {
+                continue;
+            }
+            let key = comparable_path(&path);
+            references.entry(key.clone()).or_insert_with(|| {
+                discovery_reference(name.clone(), path.clone(), hint.clone(), 3)
+            });
+            search_roots.push((path, name, false));
+        }
+    }
+
+    let mut searched = HashSet::new();
+    for (search_root, scope_name, include_root) in search_roots {
+        let search_key = comparable_path(&search_root);
+        if !search_root.is_dir() || !searched.insert(search_key) {
+            continue;
+        }
+        for (project, signal) in project_roots(&search_root, include_root) {
+            if candidates.len() >= MAX_DISCOVERY_CANDIDATES {
+                break;
+            }
+            let key = comparable_path(&project);
+            if candidates.contains_key(&key) {
+                continue;
+            }
+            let count = count_markdown_bounded(&project, 10, 6_000, 60_000, 20_000);
+            if count.count == 0 {
+                continue;
+            }
+            let base_name = project
+                .file_name()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("项目");
+            let name = if base_name.ends_with("文档") {
+                base_name.to_string()
+            } else {
+                format!("{base_name} 文档")
+            };
+            let path_text = display_path(&project);
+            let agent_kind = detect_agent_kind_value(&format!("{name} {path_text}"));
+            candidates.insert(
+                key.clone(),
+                DiscoveryCandidate {
+                    name,
+                    path: path_text,
+                    markdown_count: count.count,
+                    confidence: "medium".to_string(),
+                    kind: "project".to_string(),
+                    reason: format!("{scope_name}：{signal}"),
+                    agent_kind: agent_kind.to_string(),
+                    truncated: count.truncated,
+                    already_added: existing_roots.contains(&key),
+                },
+            );
+        }
+    }
+
+    let mut candidates = candidates.into_values().collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.already_added
+            .cmp(&right.already_added)
+            .then_with(|| (left.confidence != "high").cmp(&(right.confidence != "high")))
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
+    });
+    let mut references = references.into_values().collect::<Vec<_>>();
+    references.sort_by(|left, right| {
+        right
+            .exists
+            .cmp(&left.exists)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    DiscoveryPayload {
+        format: 1,
+        read_only: true,
+        scoped,
+        candidates,
+        references,
+    }
+}
+
+fn is_excluded(path: &Path) -> bool {
+    path.components()
+        .any(|component| is_excluded_name(component.as_os_str()))
 }
 
 fn sort_file_entries(entries: &mut [fs::DirEntry]) {
@@ -316,10 +829,7 @@ fn scan_library(
 
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
-        if EXCLUDED_DIRECTORIES
-            .iter()
-            .any(|excluded| name == *excluded)
-        {
+        if is_excluded_name(&entry.file_name()) {
             continue;
         }
         let file_type = match entry.file_type() {
@@ -594,7 +1104,7 @@ fn resolve_virtual_path(
 
 fn config_payload(state: &DesktopState) -> ConfigPayload {
     let root_name = match state.libraries.len() {
-        0 => "尚未添加文档目录".to_string(),
+        0 => "尚未添加目录".to_string(),
         1 => state.libraries[0].name.clone(),
         count => format!("{count} 个文档来源"),
     };
@@ -606,6 +1116,7 @@ fn config_payload(state: &DesktopState) -> ConfigPayload {
             id: source.id.clone(),
             name: source.name.clone(),
             tone: source.tone,
+            agent_kind: detect_agent_kind(source).to_string(),
             file_count: *state.snapshot.library_counts.get(&source.id).unwrap_or(&0),
             primary: index == 0,
         })
@@ -621,10 +1132,46 @@ fn config_payload(state: &DesktopState) -> ConfigPayload {
             "readingState": true,
             "themeCenter": true,
             "multiLibrary": true,
+            "artifactInbox": true,
             "desktop": true,
             "nativeDirectoryPicker": true,
+            "localDiscovery": true,
             "rustIndex": true,
         }),
+    }
+}
+
+fn detect_agent_kind(source: &LibrarySource) -> &'static str {
+    let value = format!(
+        "{} {} {}",
+        source.id,
+        source.name,
+        source.root.to_string_lossy()
+    );
+    detect_agent_kind_value(&value)
+}
+
+fn detect_agent_kind_value(value: &str) -> &'static str {
+    let value = value.to_lowercase();
+    if value.contains("codex") || value.contains(".codex") {
+        "codex"
+    } else if value.contains("claude") || value.contains(".claude") {
+        "claude"
+    } else if value.contains("cursor") || value.contains(".cursor") {
+        "cursor"
+    } else if value.contains("windsurf") || value.contains(".windsurf") {
+        "windsurf"
+    } else if value.contains("opencode") || value.contains(".opencode") {
+        "opencode"
+    } else if value.contains("gemini") || value.contains(".gemini") {
+        "gemini"
+    } else if ["agent", "skill", "thread", "task"]
+        .iter()
+        .any(|marker| value.contains(marker))
+    {
+        "agent"
+    } else {
+        "custom"
     }
 }
 
@@ -848,21 +1395,82 @@ async fn resolve_asset_path(path: String, state: State<'_, AppState>) -> Result<
 }
 
 #[tauri::command]
-async fn pick_libraries(
+async fn discover_libraries(
+    scan_root: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<DiscoveryPayload, String> {
+    let home = user_home().ok_or_else(|| "无法确定当前用户目录".to_string())?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let scan_root = match scan_root.map(|value| value.trim().to_string()) {
+        Some(value) if !value.is_empty() => {
+            let path = fs::canonicalize(&value)
+                .map_err(|_| format!("扫描目录不存在或不可访问：{value}"))?;
+            if !path.is_dir() {
+                return Err("所选扫描范围不是目录".to_string());
+            }
+            Some(path)
+        }
+        _ => None,
+    };
+    let existing_roots = {
+        let desktop = state_lock(&state)?;
+        desktop
+            .libraries
+            .iter()
+            .map(|source| comparable_path(&source.root))
+            .collect::<HashSet<_>>()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        discover_sources(&home, &cwd, scan_root.as_deref(), &existing_roots)
+    })
+    .await
+    .map_err(|error| format!("目录发现任务失败：{error}"))
+}
+
+#[tauri::command]
+async fn pick_discovery_root(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<ConfigPayload, String> {
+) -> Result<Option<DiscoveryPayload>, String> {
     let selected = app
         .dialog()
         .file()
-        .set_title("选择一个或多个 Markdown 文件夹")
-        .blocking_pick_folders()
-        .unwrap_or_default();
-    let selected = selected
-        .into_iter()
-        .filter_map(|path| path.into_path().ok())
-        .collect::<Vec<_>>();
-    let mut desktop = state_lock(&state)?;
+        .set_title("选择要扫描的项目范围")
+        .blocking_pick_folder();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|_| "无法读取所选扫描目录".to_string())?;
+    let root = fs::canonicalize(&path)
+        .map_err(|_| format!("扫描目录不存在或不可访问：{}", path.display()))?;
+    if !root.is_dir() {
+        return Err("所选扫描范围不是目录".to_string());
+    }
+    let home = user_home().ok_or_else(|| "无法确定当前用户目录".to_string())?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let existing_roots = {
+        let desktop = state_lock(&state)?;
+        desktop
+            .libraries
+            .iter()
+            .map(|source| comparable_path(&source.root))
+            .collect::<HashSet<_>>()
+    };
+    let payload = tauri::async_runtime::spawn_blocking(move || {
+        discover_sources(&home, &cwd, Some(&root), &existing_roots)
+    })
+    .await
+    .map_err(|error| format!("目录发现任务失败：{error}"))?;
+    Ok(Some(payload))
+}
+
+fn add_library_selections(
+    app: &AppHandle,
+    desktop: &mut DesktopState,
+    selections: Vec<LibrarySelection>,
+) -> Result<usize, String> {
     let mut used_ids = desktop
         .libraries
         .iter()
@@ -873,20 +1481,25 @@ async fn pick_libraries(
         .iter()
         .map(|source| comparable_path(&source.root))
         .collect::<HashSet<_>>();
-    for path in selected {
-        let root = match fs::canonicalize(path) {
+    let mut added = 0usize;
+    for selection in selections {
+        let root = match fs::canonicalize(&selection.path) {
             Ok(value) if value.is_dir() => value,
             _ => continue,
         };
         if !used_roots.insert(comparable_path(&root)) {
             continue;
         }
-        let name = root
-            .file_name()
-            .and_then(|value| value.to_str())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("Markdown 文档")
-            .to_string();
+        let supplied_name = selection.name.trim().chars().take(80).collect::<String>();
+        let name = if supplied_name.is_empty() {
+            root.file_name()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("Markdown 文档")
+                .to_string()
+        } else {
+            supplied_name
+        };
         let id = sanitize_library_id(&name, &root, &used_ids);
         used_ids.insert(id.clone());
         let tone = desktop.libraries.len() as u8 % SOURCE_TONE_COUNT;
@@ -899,7 +1512,49 @@ async fn pick_libraries(
             root,
             tone,
         });
+        added += 1;
     }
+    Ok(added)
+}
+
+#[tauri::command]
+async fn pick_libraries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ConfigPayload, String> {
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("选择一个或多个 Markdown 文件夹")
+        .blocking_pick_folders()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|path| path.into_path().ok())
+        .map(|path| LibrarySelection {
+            name: String::new(),
+            path: path.to_string_lossy().to_string(),
+        })
+        .collect::<Vec<_>>();
+    let mut desktop = state_lock(&state)?;
+    add_library_selections(&app, &mut desktop, selected)?;
+    save_libraries(&state.config_path, &desktop.libraries)?;
+    refresh_index(&mut desktop);
+    Ok(config_payload(&desktop))
+}
+
+#[tauri::command]
+async fn add_discovered_libraries(
+    selections: Vec<LibrarySelection>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ConfigPayload, String> {
+    if selections.len() > MAX_DISCOVERY_CANDIDATES {
+        return Err(format!(
+            "一次最多添加 {MAX_DISCOVERY_CANDIDATES} 个文档来源"
+        ));
+    }
+    let mut desktop = state_lock(&state)?;
+    add_library_selections(&app, &mut desktop, selections)?;
     save_libraries(&state.config_path, &desktop.libraries)?;
     refresh_index(&mut desktop);
     Ok(config_payload(&desktop))
@@ -952,7 +1607,10 @@ pub fn run() {
             search_documents,
             read_document,
             resolve_asset_path,
+            discover_libraries,
+            pick_discovery_root,
             pick_libraries,
+            add_discovered_libraries,
             remove_library,
         ])
         .run(tauri::generate_context!())
@@ -1012,5 +1670,68 @@ mod tests {
         );
         assert_eq!(title, "桌面阅读室");
         assert!(text.contains("Rust 索引"));
+    }
+
+    #[test]
+    fn detects_common_agent_document_sources() {
+        let temp = tempdir().expect("temporary directory");
+        let codex = source(temp.path(), "codex-work", "Codex 成果");
+        let claude = source(temp.path(), "notes", "Claude Code");
+        let custom = source(temp.path(), "personal", "项目资料");
+        assert_eq!(detect_agent_kind(&codex), "codex");
+        assert_eq!(detect_agent_kind(&claude), "claude");
+        assert_eq!(detect_agent_kind(&custom), "custom");
+    }
+
+    #[test]
+    fn discovers_agent_skills_and_markdown_projects_without_writing_them() {
+        let temp = tempdir().expect("temporary directory");
+        let home = temp.path().join("home");
+        let cwd = home.join("launch");
+        let codex_skills = home.join(".codex").join("skills");
+        let project = home.join("Documents").join("client-project");
+        fs::create_dir_all(codex_skills.join("demo")).expect("codex skills directory");
+        fs::create_dir_all(project.join("docs")).expect("project docs directory");
+        fs::create_dir_all(&cwd).expect("launch directory");
+        fs::write(codex_skills.join("demo").join("SKILL.md"), "# Demo").expect("skill markdown");
+        fs::write(project.join("docs").join("brief.md"), "# Brief").expect("project markdown");
+
+        let existing = HashSet::from([comparable_path(&codex_skills)]);
+        let payload = discover_sources(&home, &cwd, None, &existing);
+        let skill = payload
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "Codex Skills")
+            .expect("Codex Skills candidate");
+        assert_eq!(skill.markdown_count, 1);
+        assert!(skill.already_added);
+        let project_candidate = payload
+            .candidates
+            .iter()
+            .find(|candidate| candidate.path == project.to_string_lossy())
+            .expect("project candidate");
+        assert_eq!(project_candidate.kind, "project");
+        assert!(!project_candidate.already_added);
+        assert!(payload.read_only);
+        assert!(!payload.scoped);
+    }
+
+    #[test]
+    fn scoped_discovery_stays_inside_the_selected_root_and_ignores_build_outputs() {
+        let temp = tempdir().expect("temporary directory");
+        let home = temp.path().join("home");
+        let selected = temp.path().join("selected-project");
+        fs::create_dir_all(&home).expect("home directory");
+        fs::create_dir_all(selected.join("target")).expect("target directory");
+        fs::write(selected.join("README.md"), "# Project").expect("project markdown");
+        fs::write(selected.join("target").join("generated.md"), "# Generated")
+            .expect("ignored markdown");
+
+        let payload = discover_sources(&home, temp.path(), Some(&selected), &HashSet::new());
+        assert!(payload.scoped);
+        assert_eq!(payload.references.len(), 1);
+        assert_eq!(payload.candidates.len(), 1);
+        assert_eq!(payload.candidates[0].markdown_count, 1);
+        assert_eq!(payload.candidates[0].path, display_path(&selected));
     }
 }

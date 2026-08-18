@@ -6,6 +6,8 @@
 
   const elements = {
     root: document.documentElement,
+    appShell: document.getElementById("appShell"),
+    homeButton: document.getElementById("homeButton"),
     searchInput: document.getElementById("searchInput"),
     searchPanel: document.getElementById("searchPanel"),
     searchSummary: document.getElementById("searchSummary"),
@@ -24,6 +26,7 @@
     libraryName: document.getElementById("libraryName"),
     fileCount: document.getElementById("fileCount"),
     libraryNativeActions: document.getElementById("libraryNativeActions"),
+    discoverLibraryButton: document.getElementById("discoverLibraryButton"),
     addLibraryButton: document.getElementById("addLibraryButton"),
     removeLibraryButton: document.getElementById("removeLibraryButton"),
     librarySources: document.getElementById("librarySources"),
@@ -31,6 +34,28 @@
     libraryTabs: [...document.querySelectorAll("[data-library-view]")],
     collapseAllButton: document.getElementById("collapseAllButton"),
     readerPane: document.getElementById("readerPane"),
+    discoveryView: document.getElementById("discoveryView"),
+    startDiscoveryButton: document.getElementById("startDiscoveryButton"),
+    scanFolderButton: document.getElementById("scanFolderButton"),
+    manualFolderButton: document.getElementById("manualFolderButton"),
+    discoveryStatus: document.getElementById("discoveryStatus"),
+    discoveryStatusTitle: document.getElementById("discoveryStatusTitle"),
+    discoveryStatusDetail: document.getElementById("discoveryStatusDetail"),
+    discoveryResults: document.getElementById("discoveryResults"),
+    discoveryResultCount: document.getElementById("discoveryResultCount"),
+    discoveryCandidates: document.getElementById("discoveryCandidates"),
+    discoveryReferences: document.getElementById("discoveryReferences"),
+    discoverySelectionCount: document.getElementById("discoverySelectionCount"),
+    addDiscoveredButton: document.getElementById("addDiscoveredButton"),
+    inboxView: document.getElementById("inboxView"),
+    inboxSummary: document.getElementById("inboxSummary"),
+    inboxRefreshButton: document.getElementById("inboxRefreshButton"),
+    inboxPendingCount: document.getElementById("inboxPendingCount"),
+    inboxChangeCount: document.getElementById("inboxChangeCount"),
+    inboxApprovedCount: document.getElementById("inboxApprovedCount"),
+    inboxFilters: [...document.querySelectorAll("[data-inbox-filter]")],
+    inboxFilterCount: document.getElementById("inboxFilterCount"),
+    inboxList: document.getElementById("inboxList"),
     readerLoading: document.getElementById("readerLoading"),
     emptyState: document.getElementById("emptyState"),
     emptyStateTitle: document.getElementById("emptyStateTitle"),
@@ -45,10 +70,15 @@
     documentTitle: document.getElementById("documentTitle"),
     documentTime: document.getElementById("documentTime"),
     documentSize: document.getElementById("documentSize"),
+    backToInboxButton: document.getElementById("backToInboxButton"),
     favoriteButton: document.getElementById("favoriteButton"),
     favoriteIcon: document.getElementById("favoriteIcon"),
     favoriteLabel: document.getElementById("favoriteLabel"),
+    documentReviewState: document.getElementById("documentReviewState"),
+    followupButton: document.getElementById("followupButton"),
+    approveButton: document.getElementById("approveButton"),
     article: document.getElementById("article"),
+    outline: document.getElementById("outline"),
     outlineNav: document.getElementById("outlineNav"),
     toast: document.getElementById("toast"),
   };
@@ -63,6 +93,9 @@
     themeStyle: "md-reader-theme-style",
     colorMode: "md-reader-color-mode",
     libraryFilter: "md-reader-library-filter",
+    artifactSnapshot: "moyue-artifact-snapshot-v1",
+    reviewStates: "moyue-review-states-v1",
+    inboxFilter: "moyue-inbox-filter-v1",
   };
 
   const THEME_PRESETS = {
@@ -74,6 +107,23 @@
   };
   const COLOR_MODES = new Set(["system", "light", "dark"]);
   const COLOR_MODE_LABELS = { system: "跟随系统", light: "浅色", dark: "深色" };
+  const INBOX_FILTERS = new Set(["pending", "new", "updated", "approved", "all"]);
+  const AGENT_KINDS = {
+    codex: { label: "Codex", mark: "CX" },
+    claude: { label: "Claude", mark: "CL" },
+    cursor: { label: "Cursor", mark: "CU" },
+    windsurf: { label: "Windsurf", mark: "WS" },
+    opencode: { label: "OpenCode", mark: "OC" },
+    gemini: { label: "Gemini", mark: "GE" },
+    agent: { label: "Agent", mark: "AI" },
+    custom: { label: "本地来源", mark: "MD" },
+  };
+  const DISCOVERY_KIND_LABELS = {
+    project: "项目成果",
+    skills: "Skills",
+    memory: "Agent 记忆",
+    rules: "Agent 规则",
+  };
   const systemColorQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
   function readJSON(key, fallback) {
@@ -106,13 +156,15 @@
     fileCount: 0,
     currentPath: "",
     currentMtime: 0,
+    currentFile: null,
+    currentView: "inbox",
     currentRequest: null,
     treeRefreshing: false,
     expanded: new Set(readArray(STORAGE.expanded)),
     favorites: new Set(readArray(STORAGE.favorites)),
     recents: readArray(STORAGE.recents).slice(0, 12),
     scrollPositions: readJSON(STORAGE.scroll, {}),
-    sidebarView: "tree",
+    sidebarView: "inbox",
     outlineObserver: null,
     toastTimer: null,
     scrollSaveTimer: null,
@@ -123,7 +175,19 @@
     readingTheme: "ink",
     colorMode: "system",
     libraryFilter: readJSON(STORAGE.libraryFilter, "all"),
+    artifactSnapshot: readJSON(STORAGE.artifactSnapshot, null),
+    reviewStates: readJSON(STORAGE.reviewStates, {}),
+    inboxFilter: readJSON(STORAGE.inboxFilter, "pending"),
+    discoveryCandidates: [],
+    discoverySelections: new Set(),
+    discoveryRunning: false,
+    discoveryAutoStarted: false,
   };
+
+  if (!INBOX_FILTERS.has(state.inboxFilter)) state.inboxFilter = "pending";
+  if (!state.reviewStates || typeof state.reviewStates !== "object" || Array.isArray(state.reviewStates)) {
+    state.reviewStates = {};
+  }
 
   function persistExpanded() {
     writeJSON(STORAGE.expanded, [...state.expanded]);
@@ -235,10 +299,15 @@
   }
 
   function setReaderState(name) {
+    elements.discoveryView.hidden = name !== "discovery";
+    elements.inboxView.hidden = name !== "inbox";
     elements.readerLoading.hidden = name !== "loading";
     elements.emptyState.hidden = name !== "empty";
     elements.errorState.hidden = name !== "error";
     elements.documentView.hidden = name !== "document";
+    elements.outline.hidden = name !== "document";
+    elements.appShell.classList.toggle("is-inbox-view", name === "inbox");
+    elements.appShell.classList.toggle("is-discovery-view", name === "discovery");
   }
 
   function showError(message) {
@@ -269,6 +338,201 @@
       hour: "2-digit",
       minute: "2-digit",
     }).format(date)}`;
+  }
+
+  function fileSignature(file) {
+    return `${String(file?.mtime || 0)}:${String(file?.size || 0)}`;
+  }
+
+  function mtimeMilliseconds(file) {
+    const value = Number(file?.mtime) / 1_000_000;
+    return Number.isFinite(value) && value > 0 ? value : Date.now();
+  }
+
+  function inferAgentKind(library) {
+    const declared = String(library?.agentKind || "").toLocaleLowerCase("en-US");
+    if (AGENT_KINDS[declared]) return declared;
+    const value = `${library?.id || ""} ${library?.name || ""}`.toLocaleLowerCase("en-US");
+    if (value.includes("codex")) return "codex";
+    if (value.includes("claude")) return "claude";
+    if (value.includes("cursor")) return "cursor";
+    if (value.includes("windsurf")) return "windsurf";
+    if (value.includes("opencode")) return "opencode";
+    if (value.includes("gemini")) return "gemini";
+    if (/agent|skill|thread|task/.test(value)) return "agent";
+    return "custom";
+  }
+
+  function createAgentBadge(library, compact = false) {
+    const kind = inferAgentKind(library);
+    const descriptor = AGENT_KINDS[kind] || AGENT_KINDS.custom;
+    const badge = document.createElement("span");
+    badge.className = `agent-badge${compact ? " is-compact" : ""}`;
+    badge.dataset.agentKind = kind;
+    const mark = document.createElement("i");
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = descriptor.mark;
+    const label = document.createElement("span");
+    label.textContent = descriptor.label;
+    badge.append(mark, label);
+    return badge;
+  }
+
+  function flattenFiles(nodes, inheritedLibrary = null, output = []) {
+    for (const node of nodes || []) {
+      if (node.type === "library") {
+        flattenFiles(node.children || [], node, output);
+      } else if (node.type === "file") {
+        output.push({
+          ...node,
+          libraryId: node.libraryId || inheritedLibrary?.id || "",
+          libraryName: node.libraryName || inheritedLibrary?.name || "文档来源",
+          libraryTone: Number(node.libraryTone ?? inheritedLibrary?.tone) || 0,
+        });
+      } else if (node.children) {
+        flattenFiles(node.children, inheritedLibrary, output);
+      }
+    }
+    return output;
+  }
+
+  function allFiles() {
+    return flattenFiles(state.nodes);
+  }
+
+  function visibleFiles() {
+    return flattenFiles(visibleTreeNodes());
+  }
+
+  function reconcileArtifactSnapshot() {
+    const now = Date.now();
+    const previous = state.artifactSnapshot && typeof state.artifactSnapshot === "object"
+      && state.artifactSnapshot.files && typeof state.artifactSnapshot.files === "object"
+      ? state.artifactSnapshot
+      : null;
+    const previousFiles = previous?.files || {};
+    const nextFiles = {};
+    for (const file of allFiles()) {
+      const signature = fileSignature(file);
+      const old = previousFiles[file.path];
+      if (!previous) {
+        nextFiles[file.path] = {
+          signature,
+          firstSeenAt: now,
+          lastChangedAt: mtimeMilliseconds(file),
+          changeKind: "existing",
+        };
+      } else if (!old) {
+        nextFiles[file.path] = {
+          signature,
+          firstSeenAt: now,
+          lastChangedAt: now,
+          changeKind: "new",
+        };
+      } else if (old.signature !== signature) {
+        nextFiles[file.path] = {
+          signature,
+          firstSeenAt: Number(old.firstSeenAt) || now,
+          lastChangedAt: now,
+          changeKind: "updated",
+        };
+      } else {
+        nextFiles[file.path] = {
+          signature,
+          firstSeenAt: Number(old.firstSeenAt) || now,
+          lastChangedAt: Number(old.lastChangedAt) || mtimeMilliseconds(file),
+          changeKind: ["new", "updated", "existing"].includes(old.changeKind) ? old.changeKind : "existing",
+        };
+      }
+    }
+    state.artifactSnapshot = {
+      format: 1,
+      initializedAt: Number(previous?.initializedAt) || now,
+      lastScannedAt: now,
+      files: nextFiles,
+    };
+    writeJSON(STORAGE.artifactSnapshot, state.artifactSnapshot);
+  }
+
+  function artifactMeta(file) {
+    return state.artifactSnapshot?.files?.[file.path] || {
+      signature: fileSignature(file),
+      firstSeenAt: Date.now(),
+      lastChangedAt: mtimeMilliseconds(file),
+      changeKind: "existing",
+    };
+  }
+
+  function reviewMatchesFile(review, file, prefix) {
+    return String(review?.[`${prefix}Mtime`] || 0) === String(file?.mtime || 0)
+      && String(review?.[`${prefix}Size`] || 0) === String(file?.size || 0);
+  }
+
+  function reviewStatus(file) {
+    const review = state.reviewStates[file.path];
+    if (reviewMatchesFile(review, file, "reviewed")) {
+      if (review.disposition === "approved") return "approved";
+      if (review.disposition === "followup") return "followup";
+    }
+    if (reviewMatchesFile(review, file, "opened")) return "reading";
+    return "pending";
+  }
+
+  const REVIEW_STATUS = {
+    pending: { label: "待处理", detail: "尚未查看当前版本" },
+    reading: { label: "阅读中", detail: "已打开，等待确认" },
+    followup: { label: "需跟进", detail: "当前版本需要继续处理" },
+    approved: { label: "已确认", detail: "当前版本已经确认" },
+  };
+
+  function persistReviewStates() {
+    writeJSON(STORAGE.reviewStates, state.reviewStates);
+  }
+
+  function recordOpened(file) {
+    const current = state.reviewStates[file.path] || {};
+    if (reviewMatchesFile(current, file, "opened")) return;
+    state.reviewStates[file.path] = {
+      ...current,
+      openedMtime: file.mtime,
+      openedSize: file.size,
+      updatedAt: Date.now(),
+    };
+    persistReviewStates();
+  }
+
+  function setReviewDisposition(file, disposition) {
+    if (!file || !["approved", "followup"].includes(disposition)) return;
+    const current = state.reviewStates[file.path] || {};
+    state.reviewStates[file.path] = {
+      ...current,
+      disposition,
+      reviewedMtime: file.mtime,
+      reviewedSize: file.size,
+      openedMtime: file.mtime,
+      openedSize: file.size,
+      updatedAt: Date.now(),
+    };
+    persistReviewStates();
+    updateReviewControls();
+    renderInbox();
+    renderSidebar();
+    showToast(disposition === "approved" ? "当前版本已确认" : "已标记为需跟进");
+  }
+
+  function formatRelativeTime(milliseconds) {
+    const value = Number(milliseconds);
+    if (!Number.isFinite(value)) return "时间未知";
+    const seconds = Math.round((value - Date.now()) / 1000);
+    const formatter = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
+    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
+    const minutes = Math.round(seconds / 60);
+    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
+    const hours = Math.round(minutes / 60);
+    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
+    const days = Math.round(hours / 24);
+    if (Math.abs(days) < 30) return formatter.format(days, "day");
+    return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric" }).format(new Date(value));
   }
 
   function libraryById(libraryId) {
@@ -318,6 +582,7 @@
     const previousCount = state.libraries.length;
     elements.addLibraryButton.disabled = true;
     elements.emptyAddLibraryButton.disabled = true;
+    elements.manualFolderButton.disabled = true;
     elements.syncText.textContent = "等待选择目录";
     try {
       const config = await runtime.pickLibraries();
@@ -330,6 +595,227 @@
     } finally {
       elements.addLibraryButton.disabled = false;
       elements.emptyAddLibraryButton.disabled = false;
+      elements.manualFolderButton.disabled = false;
+    }
+  }
+
+  function discoveryCountLabel(count, truncated = false) {
+    return `${Number(count) || 0}${truncated ? "+" : ""} 篇 Markdown`;
+  }
+
+  function setDiscoveryStatus(title, detail, { scanning = false } = {}) {
+    elements.discoveryStatusTitle.textContent = title;
+    elements.discoveryStatusDetail.textContent = detail;
+    elements.discoveryStatus.classList.toggle("is-scanning", scanning);
+  }
+
+  function setDiscoveryBusy(busy) {
+    state.discoveryRunning = busy;
+    for (const button of [
+      elements.discoverLibraryButton,
+      elements.startDiscoveryButton,
+      elements.scanFolderButton,
+      elements.manualFolderButton,
+    ]) {
+      button.disabled = busy;
+    }
+    elements.addDiscoveredButton.disabled = busy || state.discoverySelections.size === 0;
+  }
+
+  function updateDiscoverySelection() {
+    const count = state.discoverySelections.size;
+    elements.discoverySelectionCount.textContent = String(count);
+    elements.addDiscoveredButton.textContent = count ? `添加 ${count} 个目录` : "选择目录后添加";
+    elements.addDiscoveredButton.disabled = state.discoveryRunning || count === 0;
+  }
+
+  function createDiscoveryCandidate(candidate) {
+    const row = document.createElement("label");
+    row.className = "discovery-candidate";
+    row.classList.toggle("is-added", Boolean(candidate.alreadyAdded));
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state.discoverySelections.has(candidate.path);
+    checkbox.disabled = Boolean(candidate.alreadyAdded);
+    checkbox.setAttribute("aria-label", `选择 ${candidate.name}`);
+
+    const copy = document.createElement("div");
+    copy.className = "discovery-candidate-copy";
+    const heading = document.createElement("div");
+    heading.className = "discovery-candidate-heading";
+    const title = document.createElement("strong");
+    title.textContent = candidate.name || "Markdown 文档";
+    title.title = title.textContent;
+    heading.append(title);
+    if (candidate.alreadyAdded || candidate.confidence === "high") {
+      const status = document.createElement("span");
+      status.className = "discovery-candidate-status";
+      status.textContent = candidate.alreadyAdded ? "已添加" : "推荐";
+      heading.append(status);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "discovery-candidate-meta";
+    const count = document.createElement("span");
+    count.textContent = discoveryCountLabel(candidate.markdownCount, candidate.truncated);
+    const type = document.createElement("span");
+    type.textContent = DISCOVERY_KIND_LABELS[candidate.kind] || "本地文档";
+    meta.append(count, type);
+
+    const path = document.createElement("p");
+    path.className = "discovery-candidate-path";
+    path.textContent = candidate.path;
+    path.title = candidate.path;
+    copy.append(heading, path, meta);
+    row.append(checkbox, copy);
+    row.classList.toggle("is-selected", checkbox.checked);
+
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) state.discoverySelections.add(candidate.path);
+      else state.discoverySelections.delete(candidate.path);
+      row.classList.toggle("is-selected", checkbox.checked);
+      updateDiscoverySelection();
+    });
+    return row;
+  }
+
+  function renderDiscoveryReference(reference) {
+    const item = document.createElement("article");
+    item.className = "discovery-reference";
+    const heading = document.createElement("div");
+    heading.className = "discovery-reference-heading";
+    const name = document.createElement("strong");
+    name.textContent = reference.name || "参考目录";
+    const status = document.createElement("span");
+    status.textContent = reference.exists
+      ? reference.markdownCount
+        ? discoveryCountLabel(reference.markdownCount, reference.truncated)
+        : "未发现 Markdown"
+      : "目录不存在";
+    heading.append(name, status);
+    const path = document.createElement("code");
+    path.textContent = reference.path || "";
+    path.title = reference.path || "";
+    const hint = document.createElement("p");
+    hint.textContent = reference.hint || "可以在这里查找 Agent 生成的文档";
+    item.append(heading, path, hint);
+    return item;
+  }
+
+  function renderDiscoveryPayload(payload) {
+    const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+    const references = Array.isArray(payload?.references) ? payload.references : [];
+    const available = candidates.filter((candidate) => !candidate.alreadyAdded);
+    const preserved = new Set(
+      [...state.discoverySelections].filter((path) => available.some((candidate) => candidate.path === path)),
+    );
+    if (!preserved.size) {
+      for (const candidate of available) {
+        if (candidate.confidence === "high") preserved.add(candidate.path);
+      }
+    }
+    state.discoveryCandidates = candidates;
+    state.discoverySelections = preserved;
+
+    elements.discoveryCandidates.replaceChildren();
+    if (candidates.length) {
+      candidates.forEach((candidate) => elements.discoveryCandidates.append(createDiscoveryCandidate(candidate)));
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "discovery-empty-result";
+      empty.textContent = "没有找到 Markdown 目录。可以扫描指定位置，或直接添加目录。";
+      elements.discoveryCandidates.append(empty);
+    }
+
+    elements.discoveryReferences.replaceChildren();
+    references.forEach((reference) => elements.discoveryReferences.append(renderDiscoveryReference(reference)));
+    elements.discoveryResultCount.textContent = `${candidates.length} 个目录`;
+    elements.discoveryResults.hidden = false;
+    updateDiscoverySelection();
+
+    if (available.length) {
+      setDiscoveryStatus(
+        `发现 ${available.length} 个可添加目录`,
+        state.discoverySelections.size
+          ? "常用目录已预选，请确认后添加。"
+          : "请选择需要的目录。",
+      );
+    } else if (candidates.length) {
+      setDiscoveryStatus("这些目录都已添加", "可以扫描其他位置，或返回文档库阅读。");
+    } else {
+      setDiscoveryStatus("没有找到 Markdown 目录", "请扫描指定位置，或直接添加目录。");
+    }
+  }
+
+  async function runDiscovery(mode = "common") {
+    if (!runtime.isDesktop || state.discoveryRunning) return;
+    setDiscoveryBusy(true);
+    setDiscoveryStatus(
+      mode === "folder" ? "正在扫描所选位置" : "正在检查常见位置",
+      "通常只需几秒。",
+      { scanning: true },
+    );
+    elements.syncText.textContent = "正在发现目录";
+    try {
+      const payload = mode === "folder"
+        ? await runtime.pickDiscoveryRoot()
+        : await runtime.discoverLibraries();
+      if (!payload) {
+        setDiscoveryStatus("未选择位置", "可以重新扫描，或直接添加目录。");
+        return;
+      }
+      renderDiscoveryPayload(payload);
+      elements.syncText.textContent = "发现完成";
+    } catch (error) {
+      setDiscoveryStatus("目录发现暂时失败", error.message || "请选择一个更具体的目录后重试。");
+      elements.syncText.textContent = "发现失败";
+      showToast(error.message || "目录发现失败");
+    } finally {
+      setDiscoveryBusy(false);
+    }
+  }
+
+  function showDiscovery({ autoStart = false, forceScan = false } = {}) {
+    if (!runtime.isDesktop) return;
+    const enteringDiscovery = state.currentView !== "discovery" || elements.discoveryView.hidden;
+    if (state.currentPath) persistScroll(state.currentPath);
+    if (state.currentRequest) state.currentRequest.abort();
+    state.currentView = "discovery";
+    setReaderState("discovery");
+    clearSearch();
+    document.title = `发现文档目录 · ${state.config.title}`;
+    const url = new URL(location.href);
+    url.searchParams.delete("doc");
+    url.hash = "";
+    history.replaceState(null, "", url);
+    if (enteringDiscovery) requestAnimationFrame(() => { elements.readerPane.scrollTop = 0; });
+    const shouldScan = forceScan || (autoStart && !state.discoveryAutoStarted);
+    if (autoStart) state.discoveryAutoStarted = true;
+    if (shouldScan) void runDiscovery("common");
+  }
+
+  async function addSelectedDiscoverySources() {
+    if (!runtime.isDesktop || state.discoveryRunning) return;
+    const selections = state.discoveryCandidates
+      .filter((candidate) => state.discoverySelections.has(candidate.path) && !candidate.alreadyAdded)
+      .map((candidate) => ({ name: candidate.name, path: candidate.path }));
+    if (!selections.length) return;
+    const previousCount = state.libraries.length;
+    setDiscoveryBusy(true);
+    setDiscoveryStatus("正在添加目录", "正在读取目录信息。", { scanning: true });
+    try {
+      const config = await runtime.addDiscoveredLibraries(selections);
+      applyConfig(config);
+      state.discoverySelections.clear();
+      await refreshTree({ initial: true });
+      const added = state.libraries.length - previousCount;
+      showToast(added > 0 ? `已添加 ${added} 个文档来源` : "这些目录已经在书架中");
+    } catch (error) {
+      setDiscoveryStatus("目录加入失败", error.message || "请确认目录仍然存在并重试。");
+      showToast(error.message || "目录加入失败");
+    } finally {
+      setDiscoveryBusy(false);
     }
   }
 
@@ -345,6 +831,7 @@
       writeJSON(STORAGE.libraryFilter, "all");
       state.currentPath = "";
       state.currentMtime = 0;
+      state.currentFile = null;
       applyConfig(config);
       await refreshTree({ initial: true });
       showToast(`已移除 ${library.name}`);
@@ -417,9 +904,10 @@
     renderLibrarySources();
     updateLibrarySummary();
     renderSidebar();
+    if (state.currentView === "inbox") renderInbox();
     const query = elements.searchInput.value.trim();
     if (query) queueSearch(query);
-    if (next !== "all") {
+    if (next !== "all" && state.currentView === "document") {
       const current = findFile(state.nodes, state.currentPath);
       if (!current || current.libraryId !== next) {
         const first = firstFile(visibleTreeNodes());
@@ -514,6 +1002,170 @@
     elements.fileTree.append(list);
   }
 
+  function sortedArtifactFiles() {
+    return visibleFiles().sort((left, right) => {
+      const activity = Number(artifactMeta(right).lastChangedAt) - Number(artifactMeta(left).lastChangedAt);
+      if (activity) return activity;
+      return Number(right.mtime) - Number(left.mtime);
+    });
+  }
+
+  function inboxFilesForFilter(files, filter = state.inboxFilter) {
+    if (filter === "new" || filter === "updated") {
+      return files.filter((file) => artifactMeta(file).changeKind === filter);
+    }
+    if (filter === "approved") return files.filter((file) => reviewStatus(file) === "approved");
+    if (filter === "pending") return files.filter((file) => reviewStatus(file) !== "approved");
+    return files;
+  }
+
+  function changeLabel(kind) {
+    if (kind === "new") return "新增";
+    if (kind === "updated") return "已更新";
+    return "已收录";
+  }
+
+  function createArtifactCard(file) {
+    const library = libraryById(file.libraryId) || {
+      id: file.libraryId,
+      name: file.libraryName,
+      tone: file.libraryTone,
+      agentKind: "custom",
+    };
+    const meta = artifactMeta(file);
+    const status = reviewStatus(file);
+    const descriptor = REVIEW_STATUS[status];
+    const card = document.createElement("article");
+    card.className = "artifact-card";
+    card.dataset.sourceTone = String(Number(library.tone) || 0);
+    card.dataset.reviewStatus = status;
+
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "artifact-card-open";
+    openButton.title = `打开 ${file.relativePath || file.path}`;
+    const context = document.createElement("span");
+    context.className = "artifact-card-context";
+    context.append(createSourceBadge(library, true));
+    const title = document.createElement("strong");
+    title.className = "artifact-card-title";
+    title.textContent = file.name || file.filename || "未命名文档";
+    const path = document.createElement("span");
+    path.className = "artifact-card-path";
+    path.textContent = file.relativePath || file.path;
+    openButton.append(context, title, path);
+    openButton.addEventListener("click", () => loadDocument(file.path));
+
+    const activity = document.createElement("div");
+    activity.className = "artifact-card-activity";
+    const change = document.createElement("span");
+    change.className = `artifact-change is-${meta.changeKind}`;
+    change.textContent = changeLabel(meta.changeKind);
+    const time = document.createElement("time");
+    time.dateTime = new Date(Number(meta.lastChangedAt)).toISOString();
+    time.title = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(Number(meta.lastChangedAt)));
+    time.textContent = formatRelativeTime(meta.lastChangedAt);
+    activity.append(change, time);
+
+    const review = document.createElement("span");
+    review.className = "review-state";
+    review.dataset.reviewStatus = status;
+    review.title = descriptor.detail;
+    review.textContent = descriptor.label;
+
+    const actions = document.createElement("div");
+    actions.className = "artifact-card-actions";
+    actions.append(review);
+    const action = document.createElement("button");
+    action.type = "button";
+    if (status === "approved") {
+      action.className = "artifact-secondary-action";
+      action.textContent = "打开";
+      action.addEventListener("click", () => loadDocument(file.path));
+    } else {
+      action.className = "artifact-approve-action";
+      action.textContent = "确认版本";
+      action.addEventListener("click", () => setReviewDisposition(file, "approved"));
+    }
+    actions.append(action);
+    card.append(openButton, activity, actions);
+    return card;
+  }
+
+  function renderInbox() {
+    const files = sortedArtifactFiles();
+    const pending = files.filter((file) => reviewStatus(file) !== "approved");
+    const approved = files.filter((file) => reviewStatus(file) === "approved");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const changesToday = files.filter((file) => {
+      const meta = artifactMeta(file);
+      return ["new", "updated"].includes(meta.changeKind) && Number(meta.lastChangedAt) >= today.getTime();
+    });
+    elements.inboxPendingCount.textContent = String(pending.length);
+    elements.inboxChangeCount.textContent = String(changesToday.length);
+    elements.inboxApprovedCount.textContent = String(approved.length);
+
+    const selected = libraryById(state.libraryFilter);
+    if (!files.length) {
+      elements.inboxSummary.textContent = selected
+        ? `${selected.name} 中暂无 Markdown 文档。`
+        : "添加文档目录后，更新内容会显示在这里。";
+    } else {
+      const scope = selected?.name || `${state.libraries.length || 1} 个目录`;
+      elements.inboxSummary.textContent = `${scope}，共 ${files.length} 篇 Markdown。`;
+    }
+
+    for (const button of elements.inboxFilters) {
+      const selectedFilter = button.dataset.inboxFilter === state.inboxFilter;
+      button.classList.toggle("is-active", selectedFilter);
+      button.setAttribute("aria-pressed", String(selectedFilter));
+    }
+
+    const filtered = inboxFilesForFilter(files);
+    elements.inboxFilterCount.textContent = `${filtered.length} 篇`;
+    elements.inboxList.replaceChildren();
+    elements.inboxList.classList.toggle("has-items", filtered.length > 0);
+    if (!filtered.length) {
+      const empty = document.createElement("div");
+      empty.className = "artifact-empty";
+      const title = document.createElement("strong");
+      title.textContent = state.inboxFilter === "pending" ? "没有待处理文档" : "没有符合条件的文档";
+      const detail = document.createElement("p");
+      detail.textContent = state.inboxFilter === "pending"
+        ? "当前版本都已确认。有新文件或内容更新时，会重新显示。"
+        : "可以切换筛选条件查看其他文档。";
+      empty.append(title, detail);
+      elements.inboxList.append(empty);
+      return;
+    }
+    filtered.forEach((file) => elements.inboxList.append(createArtifactCard(file)));
+  }
+
+  function showInbox({ updateHistory = true } = {}) {
+    if (runtime.isDesktop && !state.libraries.length) {
+      showDiscovery({ autoStart: true });
+      return;
+    }
+    const enteringInbox = state.currentView !== "inbox" || elements.inboxView.hidden;
+    if (state.currentPath) persistScroll(state.currentPath);
+    if (state.currentRequest) state.currentRequest.abort();
+    state.currentView = "inbox";
+    state.sidebarView = "inbox";
+    setReaderState("inbox");
+    renderInbox();
+    renderSidebar();
+    clearSearch();
+    document.title = `文档更新 · ${state.config.title}`;
+    if (updateHistory) {
+      const url = new URL(location.href);
+      url.searchParams.delete("doc");
+      url.hash = "";
+      history.replaceState(null, "", url);
+    }
+    if (enteringInbox) requestAnimationFrame(() => { elements.readerPane.scrollTop = 0; });
+  }
+
   function renderSidebar() {
     elements.fileTree.replaceChildren();
     for (const tab of elements.libraryTabs) {
@@ -523,6 +1175,11 @@
     }
     elements.collapseAllButton.hidden = state.sidebarView !== "tree";
 
+    if (state.sidebarView === "inbox") {
+      const pendingPaths = inboxFilesForFilter(sortedArtifactFiles(), "pending").map((file) => file.path);
+      renderQuickList(pendingPaths, "暂无待处理文档。目录内容更新后会显示在这里。");
+      return;
+    }
     if (state.sidebarView === "recent") {
       renderQuickList(state.recents, "还没有阅读记录。打开一篇文档后会出现在这里。");
       return;
@@ -616,6 +1273,20 @@
     elements.favoriteButton.setAttribute("aria-label", selected ? "取消收藏当前文档" : "收藏当前文档");
     elements.favoriteIcon.textContent = selected ? "★" : "☆";
     elements.favoriteLabel.textContent = selected ? "已收藏" : "收藏";
+  }
+
+  function updateReviewControls() {
+    const file = state.currentFile;
+    if (!file) return;
+    const status = reviewStatus(file);
+    const descriptor = REVIEW_STATUS[status];
+    elements.documentReviewState.dataset.reviewStatus = status;
+    elements.documentReviewState.textContent = descriptor.label;
+    elements.documentReviewState.title = descriptor.detail;
+    elements.approveButton.disabled = status === "approved";
+    elements.approveButton.textContent = status === "approved" ? "当前版本已确认" : "确认当前版本";
+    elements.followupButton.disabled = status === "followup";
+    elements.followupButton.textContent = status === "followup" ? "已标记需跟进" : "需跟进";
   }
 
   function toggleFavorite() {
@@ -847,11 +1518,15 @@
     try {
       const file = await fetchJSON(`/api/file?path=${encodeURIComponent(path)}`, { signal: controller.signal });
       await renderMarkdown(file);
+      state.currentView = "document";
+      state.currentFile = file;
       state.currentPath = file.path;
       state.currentMtime = file.mtime;
+      recordOpened(file);
       localStorage.setItem(STORAGE.lastPath, file.path);
       updateURL(file.path);
       updateFavoriteButton();
+      updateReviewControls();
       if (!options.silent || file.path !== previousPath) recordRecent(file.path);
       renderSidebar();
       setReaderState("document");
@@ -1021,6 +1696,7 @@
         const node = libraryNodeById(library.id);
         return { ...library, fileCount: Number(node?.fileCount) || 0 };
       });
+      reconcileArtifactSnapshot();
       renderLibrarySources();
       updateLibrarySummary();
       elements.syncText.textContent = "已同步";
@@ -1029,13 +1705,20 @@
       if (!state.fileCount) {
         state.currentPath = "";
         state.currentMtime = 0;
+        state.currentFile = null;
         renderSidebar();
         updateEmptyState();
-        setReaderState("empty");
+        if (runtime.isDesktop && !state.libraries.length) {
+          if (state.currentView !== "discovery" || elements.discoveryView.hidden) {
+            showDiscovery({ autoStart: initial });
+          }
+        } else if (state.currentView !== "discovery") {
+          setReaderState("empty");
+        }
         return;
       }
 
-      const requested = new URL(location.href).searchParams.get("doc");
+      const requested = initial ? new URL(location.href).searchParams.get("doc") : "";
       let current = null;
       if (initial && requested) {
         current = findFile(state.nodes, requested);
@@ -1046,6 +1729,22 @@
           updateLibrarySummary();
         }
       }
+
+      if (changed || initial) renderSidebar();
+      if (!initial && state.currentView === "discovery") return;
+      if (initial && current) {
+        await loadDocument(current.path);
+        return;
+      }
+      if (initial) {
+        showInbox({ updateHistory: false });
+        return;
+      }
+      if (state.currentView === "inbox") {
+        renderInbox();
+        return;
+      }
+
       const visibleNodes = visibleTreeNodes();
       if (!current && state.currentPath) current = findFile(visibleNodes, state.currentPath);
       if (!current) {
@@ -1054,9 +1753,8 @@
       }
       if (!current) current = firstFile(visibleNodes);
 
-      if (changed || initial) renderSidebar();
       if (!current) return;
-      if (initial || !state.currentPath || current.path !== state.currentPath) {
+      if (!state.currentPath || current.path !== state.currentPath) {
         await loadDocument(current.path);
       } else if (changed && current.mtime !== state.currentMtime) {
         await loadDocument(current.path, { preserveScroll: true, silent: true, updated: true });
@@ -1082,8 +1780,18 @@
   }
 
   function bindEvents() {
+    elements.homeButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (runtime.isDesktop && !state.libraries.length) showDiscovery({ autoStart: true });
+      else showInbox();
+    });
+    elements.discoverLibraryButton.addEventListener("click", () => showDiscovery({ forceScan: true }));
     elements.addLibraryButton.addEventListener("click", addDesktopLibraries);
     elements.emptyAddLibraryButton.addEventListener("click", addDesktopLibraries);
+    elements.startDiscoveryButton.addEventListener("click", () => runDiscovery("common"));
+    elements.scanFolderButton.addEventListener("click", () => runDiscovery("folder"));
+    elements.manualFolderButton.addEventListener("click", addDesktopLibraries);
+    elements.addDiscoveredButton.addEventListener("click", addSelectedDiscoverySources);
     elements.removeLibraryButton.addEventListener("click", removeDesktopLibrary);
     elements.themeButton.addEventListener("click", () => setThemePanel(elements.themePanel.hidden));
     bindRadioGroup(elements.themeCards, (card) => {
@@ -1102,6 +1810,26 @@
     if (typeof systemColorQuery.addEventListener === "function") systemColorQuery.addEventListener("change", followSystem);
     else systemColorQuery.addListener(followSystem);
 
+    elements.inboxRefreshButton.addEventListener("click", async () => {
+      elements.inboxRefreshButton.disabled = true;
+      elements.syncText.textContent = "正在检查";
+      await refreshTree();
+      renderInbox();
+      elements.inboxRefreshButton.disabled = false;
+      showToast("成果目录已检查");
+    });
+    for (const button of elements.inboxFilters) {
+      button.addEventListener("click", () => {
+        const filter = button.dataset.inboxFilter || "pending";
+        if (!INBOX_FILTERS.has(filter)) return;
+        state.inboxFilter = filter;
+        writeJSON(STORAGE.inboxFilter, filter);
+        renderInbox();
+      });
+    }
+    elements.backToInboxButton.addEventListener("click", () => showInbox());
+    elements.approveButton.addEventListener("click", () => setReviewDisposition(state.currentFile, "approved"));
+    elements.followupButton.addEventListener("click", () => setReviewDisposition(state.currentFile, "followup"));
     elements.favoriteButton.addEventListener("click", toggleFavorite);
     elements.readerPane.addEventListener("scroll", scheduleScrollSave, { passive: true });
     window.addEventListener("pagehide", () => persistScroll());
@@ -1148,7 +1876,8 @@
     for (const tab of elements.libraryTabs) {
       tab.addEventListener("click", () => {
         state.sidebarView = tab.dataset.libraryView || "tree";
-        renderSidebar();
+        if (state.sidebarView === "inbox") showInbox();
+        else renderSidebar();
       });
     }
     elements.mobileMenuButton.addEventListener("click", () => {
@@ -1177,6 +1906,8 @@
           renderSidebar();
         }
         loadDocument(requested);
+      } else if (!requested) {
+        showInbox({ updateHistory: false });
       }
     });
   }

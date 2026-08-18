@@ -78,10 +78,84 @@ class FrontendContractTests(unittest.TestCase):
             "search_documents",
             "read_document",
             "resolve_asset_path",
+            "discover_libraries",
+            "pick_discovery_root",
             "pick_libraries",
+            "add_discovered_libraries",
             "remove_library",
         ):
             self.assertIn(f'"{command}"', runtime)
+
+    def test_desktop_source_discovery_contract_is_present(self) -> None:
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        stylesheet = (STATIC / "app.css").read_text(encoding="utf-8")
+        for element_id in (
+            "discoverLibraryButton",
+            "discoveryView",
+            "startDiscoveryButton",
+            "scanFolderButton",
+            "manualFolderButton",
+            "discoveryCandidates",
+            "discoveryReferences",
+            "addDiscoveredButton",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("添加文档目录", html)
+        self.assertIn("仅在本机读取，不会修改文件", html)
+        self.assertIn("选择目录", html)
+        self.assertNotIn("Local Source Discovery", html)
+        self.assertNotIn("discovery-kicker", html)
+        self.assertIn("renderDiscoveryPayload", javascript)
+        self.assertIn("candidate.confidence === \"high\"", javascript)
+        self.assertIn('`添加 ${count} 个目录`', javascript)
+        self.assertIn('state.currentView === "discovery"', javascript)
+        self.assertIn(
+            'const enteringDiscovery = state.currentView !== "discovery" || elements.discoveryView.hidden',
+            javascript,
+        )
+        self.assertIn(
+            'if (enteringDiscovery) requestAnimationFrame(() => { elements.readerPane.scrollTop = 0; });',
+            javascript,
+        )
+        self.assertIn(
+            'if (state.currentView !== "discovery" || elements.discoveryView.hidden) {',
+            javascript,
+        )
+        self.assertIn(".discovery-candidate", stylesheet)
+        self.assertIn(".is-discovery-view", stylesheet)
+
+    def test_agent_artifact_inbox_contract_is_present(self) -> None:
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        stylesheet = (STATIC / "app.css").read_text(encoding="utf-8")
+        for element_id in (
+            "inboxView",
+            "inboxPendingCount",
+            "inboxChangeCount",
+            "inboxApprovedCount",
+            "inboxList",
+            "documentReviewState",
+            "approveButton",
+            "followupButton",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        for filter_name in ("pending", "new", "updated", "approved", "all"):
+            self.assertIn(f'data-inbox-filter="{filter_name}"', html)
+        self.assertIn("文档更新", html)
+        self.assertIn("确认当前版本", html)
+        self.assertNotIn("Agent Artifact Inbox", html)
+        self.assertNotIn("等待你验收的工作", html)
+        self.assertNotIn("inbox-kicker", html)
+        self.assertIn("moyue-artifact-snapshot-v1", javascript)
+        self.assertIn("moyue-review-states-v1", javascript)
+        self.assertIn("reconcileArtifactSnapshot", javascript)
+        self.assertIn("setReviewDisposition", javascript)
+        self.assertIn('elements.inboxList.classList.toggle("has-items"', javascript)
+        self.assertIn('const enteringInbox = state.currentView !== "inbox" || elements.inboxView.hidden', javascript)
+        self.assertIn('if (state.currentView === "inbox") {\n        renderInbox();', javascript)
+        self.assertIn(".artifact-card", stylesheet)
+        self.assertIn('[data-review-status="approved"]', stylesheet)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_javascript_syntax(self) -> None:

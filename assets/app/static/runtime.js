@@ -73,6 +73,33 @@
     }
   }
 
+  async function discoverLibraries() {
+    if (!isDesktop) throw new Error("网页模式不能扫描本机目录");
+    try {
+      return await tauriCore.invoke("discover_libraries", { scanRoot: null });
+    } catch (error) {
+      throw normalizedError(error);
+    }
+  }
+
+  async function pickDiscoveryRoot() {
+    if (!isDesktop) throw new Error("网页模式不能扫描本机目录");
+    try {
+      return await tauriCore.invoke("pick_discovery_root");
+    } catch (error) {
+      throw normalizedError(error);
+    }
+  }
+
+  async function addDiscoveredLibraries(selections) {
+    if (!isDesktop) throw new Error("网页模式不能修改文档来源");
+    try {
+      return await tauriCore.invoke("add_discovered_libraries", { selections });
+    } catch (error) {
+      throw normalizedError(error);
+    }
+  }
+
   async function removeLibrary(libraryId) {
     if (!isDesktop) throw new Error("网页模式不能修改文档来源");
     try {
@@ -87,7 +114,10 @@
     isDesktop,
     request: isDesktop ? desktopRequest : webRequest,
     assetUrl,
+    discoverLibraries,
+    pickDiscoveryRoot,
     pickLibraries,
+    addDiscoveredLibraries,
     removeLibrary,
   });
 })();

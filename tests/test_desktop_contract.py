@@ -50,7 +50,10 @@ class DesktopContractTests(unittest.TestCase):
             "search_documents",
             "read_document",
             "resolve_asset_path",
+            "discover_libraries",
+            "pick_discovery_root",
             "pick_libraries",
+            "add_discovered_libraries",
             "remove_library",
         }
         for command in commands:

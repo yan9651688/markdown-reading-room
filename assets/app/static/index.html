@@ -21,7 +21,7 @@
           <button class="mobile-menu-button" id="mobileMenuButton" type="button" aria-label="打开目录">
             <span></span><span></span><span></span>
           </button>
-          <a class="brand" href="/" aria-label="返回文档首页">
+          <a class="brand" id="homeButton" href="/" aria-label="打开收件箱">
             <span class="brand-mark" aria-hidden="true">M</span>
             <span class="brand-name">墨阅</span>
           </a>
@@ -114,19 +114,19 @@
 
       <aside class="sidebar" id="sidebar" aria-label="文档目录">
         <div class="library-heading">
-          <p>Agent 文档书架</p>
+          <p>文档库</p>
           <h1 id="libraryName">正在加载</h1>
           <span id="fileCount">0 篇文档</span>
         </div>
         <div class="library-native-actions" id="libraryNativeActions" hidden>
-          <button class="library-add-button" id="addLibraryButton" type="button">
-            <span aria-hidden="true">＋</span> 添加目录
-          </button>
+          <button class="library-discover-button" id="discoverLibraryButton" type="button">发现目录</button>
+          <button class="library-add-button" id="addLibraryButton" type="button">添加目录</button>
           <button class="library-remove-button" id="removeLibraryButton" type="button" hidden>移除当前</button>
         </div>
         <nav class="library-sources" id="librarySources" aria-label="按文档来源筛选"></nav>
         <div class="library-tabs" role="tablist" aria-label="目录视图">
-          <button class="is-active" type="button" role="tab" aria-selected="true" data-library-view="tree">目录</button>
+          <button class="is-active" type="button" role="tab" aria-selected="true" data-library-view="inbox">收件箱</button>
+          <button type="button" role="tab" aria-selected="false" data-library-view="tree">目录</button>
           <button type="button" role="tab" aria-selected="false" data-library-view="recent">最近</button>
           <button type="button" role="tab" aria-selected="false" data-library-view="favorites">收藏</button>
         </div>
@@ -140,6 +140,91 @@
       <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="关闭目录"></button>
 
       <main class="reader-pane" id="readerPane">
+        <section class="library-discovery" id="discoveryView" aria-labelledby="discoveryTitle" hidden>
+          <header class="discovery-hero">
+            <div class="discovery-hero-copy">
+              <h1 id="discoveryTitle">添加文档目录</h1>
+              <p>选择要在墨阅中阅读的 Markdown 目录。</p>
+            </div>
+            <p class="discovery-safety-note">仅在本机读取，不会修改文件</p>
+          </header>
+
+          <div class="discovery-actions" aria-label="目录发现方式">
+            <button class="discovery-primary-action" id="startDiscoveryButton" type="button">重新扫描</button>
+            <button class="discovery-secondary-action" id="scanFolderButton" type="button">扫描指定位置</button>
+            <button class="discovery-secondary-action" id="manualFolderButton" type="button">直接添加目录</button>
+          </div>
+
+          <div class="discovery-status" id="discoveryStatus" role="status" aria-live="polite">
+            <span class="discovery-status-mark" aria-hidden="true"></span>
+            <div>
+              <strong id="discoveryStatusTitle">正在检查常见位置</strong>
+              <p id="discoveryStatusDetail">通常只需几秒。</p>
+            </div>
+          </div>
+
+          <div class="discovery-results" id="discoveryResults" hidden>
+            <div class="discovery-results-heading">
+              <div>
+                <h2>选择目录</h2>
+                <p>勾选想要在墨阅中阅读的内容</p>
+              </div>
+              <span id="discoveryResultCount">0 个目录</span>
+            </div>
+            <div class="discovery-candidates" id="discoveryCandidates"></div>
+
+            <details class="discovery-references">
+              <summary>
+                <span><strong>找不到需要的目录？</strong><small>查看常见位置</small></span>
+                <span aria-hidden="true">＋</span>
+              </summary>
+              <div class="discovery-reference-list" id="discoveryReferences"></div>
+            </details>
+
+            <footer class="discovery-selection-bar">
+              <p>已选择 <strong id="discoverySelectionCount">0</strong> 个目录</p>
+              <button id="addDiscoveredButton" type="button" disabled>选择目录后添加</button>
+            </footer>
+          </div>
+        </section>
+
+        <section class="artifact-inbox" id="inboxView" aria-labelledby="inboxTitle" hidden>
+          <header class="inbox-hero">
+            <div class="inbox-hero-copy">
+              <h1 id="inboxTitle">文档更新</h1>
+              <p id="inboxSummary">查看新增或发生变化的 Markdown 文档。</p>
+            </div>
+            <button class="inbox-refresh-button" id="inboxRefreshButton" type="button">刷新</button>
+          </header>
+
+          <div class="inbox-stats" aria-label="文档更新概览">
+            <article class="inbox-stat is-primary">
+              <span class="inbox-stat-label">待处理</span>
+              <strong id="inboxPendingCount">0</strong>
+            </article>
+            <article class="inbox-stat">
+              <span class="inbox-stat-label">今日更新</span>
+              <strong id="inboxChangeCount">0</strong>
+            </article>
+            <article class="inbox-stat">
+              <span class="inbox-stat-label">已确认</span>
+              <strong id="inboxApprovedCount">0</strong>
+            </article>
+          </div>
+
+          <div class="inbox-toolbar">
+            <div class="inbox-filters" id="inboxFilters" role="group" aria-label="筛选文档">
+              <button class="is-active" type="button" data-inbox-filter="pending" aria-pressed="true">待处理</button>
+              <button type="button" data-inbox-filter="new" aria-pressed="false">新增</button>
+              <button type="button" data-inbox-filter="updated" aria-pressed="false">有更新</button>
+              <button type="button" data-inbox-filter="approved" aria-pressed="false">已确认</button>
+              <button type="button" data-inbox-filter="all" aria-pressed="false">全部</button>
+            </div>
+            <span class="inbox-filter-count" id="inboxFilterCount">0 篇</span>
+          </div>
+          <div class="artifact-list" id="inboxList"></div>
+        </section>
+
         <div class="reader-loading" id="readerLoading" role="status">
           <div class="skeleton skeleton-short"></div>
           <div class="skeleton skeleton-title"></div>
@@ -165,19 +250,32 @@
         <article class="document-view" id="documentView" hidden>
           <header class="document-header">
             <div class="document-context">
+              <button class="back-to-inbox-button" id="backToInboxButton" type="button" aria-label="返回收件箱">
+                <span aria-hidden="true">←</span> 收件箱
+              </button>
               <span class="source-badge" id="documentSource"></span>
               <p class="breadcrumb" id="breadcrumb"></p>
             </div>
             <div class="document-title-row">
               <h1 id="documentTitle"></h1>
-              <button class="favorite-button" id="favoriteButton" type="button" aria-pressed="false" aria-label="收藏当前文档">
-                <span id="favoriteIcon" aria-hidden="true">☆</span>
-                <span id="favoriteLabel">收藏</span>
-              </button>
+              <div class="document-title-actions">
+                <button class="favorite-button" id="favoriteButton" type="button" aria-pressed="false" aria-label="收藏当前文档">
+                  <span id="favoriteIcon" aria-hidden="true">☆</span>
+                  <span id="favoriteLabel">收藏</span>
+                </button>
+              </div>
             </div>
             <div class="document-meta">
               <span id="documentTime"></span>
               <span id="documentSize"></span>
+            </div>
+            <div class="document-review-bar">
+              <span class="review-state" id="documentReviewState" data-review-status="pending">待处理</span>
+              <p>状态仅保存在墨阅本机，不会修改原文档。</p>
+              <div class="document-review-actions">
+                <button class="review-followup-button" id="followupButton" type="button">需跟进</button>
+                <button class="review-approve-button" id="approveButton" type="button">确认当前版本</button>
+              </div>
             </div>
           </header>
           <div class="markdown-body" id="article"></div>

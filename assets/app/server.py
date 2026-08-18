@@ -110,6 +110,24 @@ class LibrarySource:
         object.__setattr__(self, "tone", int(self.tone) % SOURCE_TONE_COUNT)
 
 
+def detect_agent_kind(source: LibrarySource) -> str:
+    """Classify a local document source without reading or changing its contents."""
+    value = f"{source.id} {source.name} {source.root}".casefold()
+    patterns = (
+        ("codex", ("codex", ".codex")),
+        ("claude", ("claude", ".claude")),
+        ("cursor", ("cursor", ".cursor")),
+        ("windsurf", ("windsurf", ".windsurf")),
+        ("opencode", ("opencode", ".opencode")),
+        ("gemini", ("gemini", ".gemini")),
+        ("agent", ("agent", "skill", "thread", "task")),
+    )
+    for kind, markers in patterns:
+        if any(marker in value for marker in markers):
+            return kind
+    return "custom"
+
+
 @dataclass(frozen=True)
 class AppConfig:
     root: Path
@@ -594,6 +612,7 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
                             "id": source.id,
                             "name": source.name,
                             "tone": source.tone,
+                            "agentKind": detect_agent_kind(source),
                             "fileCount": library_counts.get(source.id, 0),
                             "primary": source.id == self.config.primary_library.id,
                         }
@@ -604,6 +623,7 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
                         "readingState": True,
                         "themeCenter": True,
                         "multiLibrary": True,
+                        "artifactInbox": True,
                     },
                 }
             )
