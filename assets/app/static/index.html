@@ -27,9 +27,16 @@
         <div class="topbar-main">
           <label class="search-box" for="searchInput">
             <span class="search-icon" aria-hidden="true"></span>
-            <input id="searchInput" type="search" autocomplete="off" placeholder="搜索文件名" />
+            <input id="searchInput" type="search" autocomplete="off" placeholder="搜索标题、路径和正文" />
             <kbd>Ctrl K</kbd>
           </label>
+          <section class="search-panel" id="searchPanel" aria-label="全文搜索结果" hidden>
+            <header class="search-panel-header">
+              <span id="searchSummary">输入关键词搜索全部文档</span>
+              <button id="clearSearchButton" type="button">清除</button>
+            </header>
+            <div class="search-results" id="searchResults" role="listbox"></div>
+          </section>
           <div class="topbar-actions">
             <span class="sync-text" id="syncText" aria-live="polite">正在连接</span>
             <button class="theme-button" id="themeButton" type="button" aria-label="切换明暗主题">
@@ -45,6 +52,11 @@
           <p>文档库</p>
           <h1 id="libraryName">正在加载</h1>
           <span id="fileCount">0 篇文档</span>
+        </div>
+        <div class="library-tabs" role="tablist" aria-label="目录视图">
+          <button class="is-active" type="button" role="tab" aria-selected="true" data-library-view="tree">目录</button>
+          <button type="button" role="tab" aria-selected="false" data-library-view="recent">最近</button>
+          <button type="button" role="tab" aria-selected="false" data-library-view="favorites">收藏</button>
         </div>
         <nav class="file-tree" id="fileTree"></nav>
         <div class="sidebar-footer">
@@ -80,7 +92,13 @@
         <article class="document-view" id="documentView" hidden>
           <header class="document-header">
             <p class="breadcrumb" id="breadcrumb"></p>
-            <h1 id="documentTitle"></h1>
+            <div class="document-title-row">
+              <h1 id="documentTitle"></h1>
+              <button class="favorite-button" id="favoriteButton" type="button" aria-pressed="false" aria-label="收藏当前文档">
+                <span id="favoriteIcon" aria-hidden="true">☆</span>
+                <span id="favoriteLabel">收藏</span>
+              </button>
+            </div>
             <div class="document-meta">
               <span id="documentTime"></span>
               <span id="documentSize"></span>

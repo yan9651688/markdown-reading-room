@@ -13,6 +13,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parents[1]
 APP_TEMPLATE = SKILL_DIR / "assets" / "app"
 MARKER_NAME = ".markdown-reader-install.json"
+APP_VERSION = "0.2.0"
 
 
 def write_text(path: Path, content: str) -> None:
@@ -63,7 +64,12 @@ def main() -> int:
     write_text(output / "reader.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
     write_text(
         output / MARKER_NAME,
-        json.dumps({"skill": "serve-markdown-library", "format": 1}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(
+            {"skill": "serve-markdown-library", "format": 2, "version": APP_VERSION},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
     )
 
     windows_launcher = """@echo off

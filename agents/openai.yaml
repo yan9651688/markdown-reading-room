@@ -1,4 +1,4 @@
 interface:
-  display_name: "Markdown ÔÄ¶ÁÊÒ"
-  short_description: "²¿Êğ¿ÉÊµÊ±ä¯ÀÀ±¾µØ Markdown Ä¿Â¼µÄÇåË¬ÍøÒ³"
-  default_prompt: "Ê¹ÓÃ $serve-markdown-library ÎªÖ¸¶¨Ä¿Â¼²¿ÊğÒ»¸ö Markdown ÔÄ¶ÁÕ¾¡£"
+  display_name: "å¢¨é˜… Markdown é˜…è¯»å®¤"
+  short_description: "æŠŠæœ¬åœ° Markdown ç›®å½•éƒ¨ç½²ä¸ºå¯å…¨æ–‡æœç´¢çš„æ¸…çˆ½é˜…è¯»ç«™"
+  default_prompt: "ä½¿ç”¨ $serve-markdown-library ä¸ºæŒ‡å®šç›®å½•éƒ¨ç½²ä¸€ä¸ªå¯æœç´¢å¹¶è®°å¿†é˜…è¯»çŠ¶æ€çš„ Markdown é˜…è¯»ç«™ã€‚"

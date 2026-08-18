@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import mimetypes
 import os
 import re
 import sys
 import threading
+import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +25,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
+APP_VERSION = "0.2.0"
 DEFAULT_EXCLUDES = {".git", ".hg", ".svn", ".venv", "node_modules", "__pycache__"}
 DEFAULT_EXTENSIONS = {".md", ".markdown", ".mdown", ".mkd"}
 SAFE_ASSET_EXTENSIONS = {
@@ -50,7 +54,11 @@ SAFE_ASSET_EXTENSIONS = {
     ".zip",
 }
 MAX_MARKDOWN_BYTES = 8 * 1024 * 1024
+MAX_INDEX_BYTES = 2 * 1024 * 1024
 MAX_ASSET_BYTES = 64 * 1024 * 1024
+MAX_SEARCH_QUERY = 120
+MAX_SEARCH_RESULTS = 50
+INDEX_WORKERS = min(8, max(2, os.cpu_count() or 2))
 SAFE_STATIC_FILES = {
     "": "index.html",
     "/": "index.html",
@@ -102,9 +110,32 @@ class AppConfig:
         return candidate
 
 
-def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int]:
+@dataclass(frozen=True)
+class FileRecord:
+    path: str
+    name: str
+    filename: str
+    mtime: int
+    size: int
+
+
+@dataclass(frozen=True)
+class SearchDocument:
+    path: str
+    name: str
+    filename: str
+    title: str
+    text: str
+    searchable: str
+    mtime: int
+    size: int
+    indexed: bool
+
+
+def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int, dict[str, FileRecord]]:
     fingerprint = hashlib.sha256()
     file_count = 0
+    records: dict[str, FileRecord] = {}
 
     def walk(directory: Path) -> list[dict[str, Any]]:
         nonlocal file_count
@@ -154,18 +185,229 @@ def scan_tree(config: AppConfig) -> tuple[list[dict[str, Any]], str, int]:
                     "size": stat.st_size,
                 }
             )
+            records[relative] = FileRecord(
+                path=relative,
+                name=path.stem,
+                filename=entry.name,
+                mtime=stat.st_mtime_ns,
+                size=stat.st_size,
+            )
         return folders + files
 
     nodes = walk(config.root)
-    return nodes, fingerprint.hexdigest()[:20], file_count
+    return nodes, fingerprint.hexdigest()[:20], file_count, records
+
+
+def decode_markdown(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", errors="replace")
+
+
+def markdown_search_text(source: str, fallback_title: str) -> tuple[str, str]:
+    body = source
+    frontmatter_title = ""
+    frontmatter = re.match(r"^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)", body)
+    if frontmatter:
+        title_match = re.search(r"^title\s*:\s*(.+?)\s*$", frontmatter.group(1), flags=re.IGNORECASE | re.MULTILINE)
+        if title_match:
+            frontmatter_title = title_match.group(1).strip().strip("\"'")
+        body = body[frontmatter.end() :]
+
+    heading = re.search(r"^#\s+(.+?)\s*$", body, flags=re.MULTILINE)
+    title = frontmatter_title or (heading.group(1).strip() if heading else fallback_title)
+    plain = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", body)
+    plain = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", plain)
+    plain = re.sub(r"<[^>]+>", " ", plain)
+    plain = re.sub(r"^\s{0,3}(?:#{1,6}|>|[-+*]\s|\d+[.)]\s)", "", plain, flags=re.MULTILINE)
+    plain = re.sub(r"[`*_~|]", "", plain)
+    plain = re.sub(r"\s+", " ", html.unescape(plain)).strip()
+    return title, plain
+
+
+def build_search_document(config: AppConfig, record: FileRecord) -> SearchDocument:
+    title = record.name
+    text = ""
+    indexed = record.size <= MAX_INDEX_BYTES
+    if indexed:
+        try:
+            raw = config.safe_path(record.path).read_bytes()
+            title, text = markdown_search_text(decode_markdown(raw), record.name)
+        except (OSError, PermissionError):
+            indexed = False
+    searchable = " ".join((record.path, record.filename, record.name, title, text)).casefold()
+    return SearchDocument(
+        path=record.path,
+        name=record.name,
+        filename=record.filename,
+        title=title,
+        text=text,
+        searchable=searchable,
+        mtime=record.mtime,
+        size=record.size,
+        indexed=indexed,
+    )
+
+
+def search_snippet(text: str, terms: list[str], radius: int = 76) -> str:
+    if not text:
+        return ""
+    folded = text.casefold()
+    positions = [folded.find(term) for term in terms]
+    positions = [position for position in positions if position >= 0]
+    center = min(positions) if positions else 0
+    start = max(0, center - radius)
+    end = min(len(text), center + radius * 2)
+    snippet = text[start:end].strip()
+    if start:
+        snippet = "…" + snippet
+    if end < len(text):
+        snippet += "…"
+    return snippet
+
+
+class LibraryIndex:
+    """Cache the directory tree and a lightweight read-only full-text index."""
+
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self._lock = threading.RLock()
+        self._refresh_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._nodes: list[dict[str, Any]] = []
+        self._version = ""
+        self._file_count = 0
+        self._documents: dict[str, SearchDocument] = {}
+        self._scan_ms = 0.0
+        self._last_error = ""
+
+    def start(self) -> None:
+        self.refresh()
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="markdown-library-index", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        interval = max(0.8, self.config.poll_ms / 1000)
+        while not self._stop_event.wait(interval):
+            try:
+                self.refresh()
+            except Exception as exc:  # keep the last valid snapshot available
+                with self._lock:
+                    self._last_error = str(exc)
+
+    def refresh(self) -> bool:
+        with self._refresh_lock:
+            started = time.perf_counter()
+            nodes, version, file_count, records = scan_tree(self.config)
+            with self._lock:
+                previous_version = self._version
+                previous_documents = self._documents
+
+            documents: dict[str, SearchDocument] = {}
+            changed_records: list[FileRecord] = []
+            for path, record in records.items():
+                previous = previous_documents.get(path)
+                if previous and previous.mtime == record.mtime and previous.size == record.size:
+                    documents[path] = previous
+                else:
+                    changed_records.append(record)
+
+            if len(changed_records) < 4:
+                changed_documents = [build_search_document(self.config, record) for record in changed_records]
+            else:
+                with ThreadPoolExecutor(max_workers=min(INDEX_WORKERS, len(changed_records))) as executor:
+                    changed_documents = list(executor.map(lambda record: build_search_document(self.config, record), changed_records))
+            documents.update((document.path, document) for document in changed_documents)
+
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            with self._lock:
+                self._nodes = nodes
+                self._version = version
+                self._file_count = file_count
+                self._documents = documents
+                self._scan_ms = elapsed_ms
+                self._last_error = ""
+            return version != previous_version
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "nodes": self._nodes,
+                "version": self._version,
+                "fileCount": self._file_count,
+                "indexedCount": sum(1 for document in self._documents.values() if document.indexed),
+                "scanMs": round(self._scan_ms, 1),
+                "error": self._last_error,
+            }
+
+    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        normalized = " ".join(query.split()).casefold()
+        if not normalized:
+            return []
+        terms = [term for term in normalized.split(" ") if term]
+        with self._lock:
+            documents = list(self._documents.values())
+
+        ranked: list[tuple[int, SearchDocument]] = []
+        for document in documents:
+            if any(term not in document.searchable for term in terms):
+                continue
+            title = document.title.casefold()
+            filename = document.filename.casefold()
+            path = document.path.casefold()
+            body = document.text.casefold()
+            score = 0
+            for term in terms:
+                if term in title:
+                    score += 120
+                if term in filename:
+                    score += 90
+                if term in path:
+                    score += 45
+                score += min(body.count(term), 8) * 12
+            if normalized in title:
+                score += 80
+            if normalized in body:
+                score += 30
+            ranked.append((score, document))
+
+        ranked.sort(key=lambda item: (-item[0], natural_key(item[1].path)))
+        results = []
+        for score, document in ranked[: max(1, min(limit, MAX_SEARCH_RESULTS))]:
+            results.append(
+                {
+                    "path": document.path,
+                    "name": document.name,
+                    "title": document.title,
+                    "snippet": search_snippet(document.text, terms),
+                    "mtime": document.mtime,
+                    "size": document.size,
+                    "score": score,
+                    "indexed": document.indexed,
+                }
+            )
+        return results
 
 
 class MarkdownReaderHandler(BaseHTTPRequestHandler):
-    server_version = "MarkdownReadingRoom/1.0"
+    server_version = f"MarkdownReadingRoom/{APP_VERSION}"
 
     @property
     def config(self) -> AppConfig:
         return self.server.app_config  # type: ignore[attr-defined]
+
+    @property
+    def library_index(self) -> LibraryIndex:
+        return self.server.library_index  # type: ignore[attr-defined]
 
     def log_message(self, message: str, *args: Any) -> None:
         sys.stdout.write("[%s] %s\n" % (self.log_date_time_string(), message % args))
@@ -209,7 +451,15 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlsplit(self.path)
         if parsed.path == "/health":
-            self.send_json({"ok": True})
+            snapshot = self.library_index.snapshot()
+            self.send_json(
+                {
+                    "ok": True,
+                    "version": APP_VERSION,
+                    "fileCount": snapshot["fileCount"],
+                    "indexedCount": snapshot["indexedCount"],
+                }
+            )
             return
         if parsed.path == "/api/config":
             self.send_json(
@@ -217,12 +467,16 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
                     "title": self.config.title,
                     "rootName": self.config.root.name or str(self.config.root),
                     "pollMs": self.config.poll_ms,
+                    "version": APP_VERSION,
+                    "features": {"fullTextSearch": True, "readingState": True},
                 }
             )
             return
         if parsed.path == "/api/tree":
-            nodes, version, file_count = scan_tree(self.config)
-            self.send_json({"nodes": nodes, "version": version, "fileCount": file_count})
+            self.send_json(self.library_index.snapshot())
+            return
+        if parsed.path == "/api/search":
+            self.serve_search(parse_qs(parsed.query))
             return
         if parsed.path == "/api/file":
             self.serve_markdown(parse_qs(parsed.query))
@@ -231,6 +485,19 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
             self.serve_asset(parse_qs(parsed.query))
             return
         self.serve_static(parsed.path)
+
+    def serve_search(self, query: dict[str, list[str]]) -> None:
+        phrase = (query.get("q") or [""])[0].strip()
+        if len(phrase) > MAX_SEARCH_QUERY:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, f"搜索词不能超过 {MAX_SEARCH_QUERY} 个字符")
+            return
+        try:
+            limit = int((query.get("limit") or ["20"])[0])
+        except ValueError:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "limit 必须是整数")
+            return
+        results = self.library_index.search(phrase, limit)
+        self.send_json({"query": phrase, "count": len(results), "results": results})
 
     def query_path(self, query: dict[str, list[str]]) -> tuple[str, Path]:
         values = query.get("path", [])
@@ -260,10 +527,7 @@ class MarkdownReaderHandler(BaseHTTPRequestHandler):
             self.send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             return
 
-        try:
-            content = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            content = raw.decode("utf-8", errors="replace")
+        content = decode_markdown(raw)
         self.send_json(
             {
                 "path": relative,
@@ -361,10 +625,17 @@ def main() -> int:
     extensions = normalize_extensions(args.extension, values.get("extensions"))
     excludes = frozenset(DEFAULT_EXCLUDES | set(values.get("excludes", [])) | set(args.exclude or []))
     app_config = AppConfig(root, str(title), poll_ms, extensions, excludes)
+    library_index = LibraryIndex(app_config)
 
     server = ThreadingHTTPServer((host, port), MarkdownReaderHandler)
     server.daemon_threads = True
     server.app_config = app_config  # type: ignore[attr-defined]
+    server.library_index = library_index  # type: ignore[attr-defined]
+    try:
+        library_index.start()
+    except Exception:
+        server.server_close()
+        raise
     display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     url = f"http://{display_host}:{server.server_port}"
 
@@ -383,6 +654,7 @@ def main() -> int:
         print("\n正在停止 Markdown 阅读室...")
     finally:
         server.server_close()
+        library_index.stop()
     return 0
 
 

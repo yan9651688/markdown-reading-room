@@ -2,16 +2,18 @@
 
 一个清爽、只读、零前端构建步骤的本地 Markdown 文档阅读器。
 
-它把任意文件夹中的 Markdown 文件组织成网页文档库，提供分级目录、文章大纲、实时刷新和明暗主题。适合集中查看 Codex、Claude Code 或其他 Agent 生成的大量 `.md` 文件。
+它把任意文件夹中的 Markdown 文件组织成网页文档库，提供分级目录、正文搜索、阅读状态记忆、实时刷新和明暗主题。适合集中查看 Codex、Claude Code 或其他 Agent 生成的大量 `.md` 文件。
 
 ![墨阅界面预览](docs/preview.png)
 
 ## 主要功能
 
 - 递归读取 `.md`、`.markdown`、`.mdown` 和 `.mkd`
-- 左侧分级目录、文件名搜索与折叠状态保存
+- 标题、路径和正文全文搜索，提供命中片段与关键词高亮
+- 左侧分级目录、最近阅读、收藏与折叠状态保存
 - 右侧文章大纲与章节定位
-- Markdown 文件变化后自动刷新，并保留阅读位置
+- 每篇文档独立记忆阅读位置，重启浏览器后继续阅读
+- 后台缓存目录与增量正文索引，文件变化后自动刷新
 - 支持相对图片、内部 Markdown 链接、表格、任务列表和代码块
 - 明亮与暗色主题，兼容手机和窄屏设备
 - 浏览器端净化渲染结果，只读访问原始文档
@@ -52,9 +54,23 @@ serve-markdown-library/
 ├── assets/app/
 │   ├── server.py
 │   └── static/
-├── scripts/deploy.py
-└── scripts/build_release.py
+├── scripts/
+│   ├── deploy.py
+│   └── build_release.py
+├── tests/
+└── .github/workflows/
 ```
+
+## 开发与验证
+
+项目仅依赖 Python 标准库。运行完整测试：
+
+```bash
+python -m unittest discover -s tests -v
+python scripts/build_release.py
+```
+
+每次推送和 Pull Request 会在 Windows、macOS、Linux 上运行测试。推送 `v*` 标签后，GitHub Actions 自动生成并上传 Skill ZIP。
 
 ## 安全边界
 
@@ -69,8 +85,8 @@ serve-markdown-library/
 - 桌面端封装与系统托盘常驻
 - PWA 与离线阅读
 - iOS、Android 和平板适配
-- 多目录书架与全文搜索
-- 标签、收藏和最近阅读
+- 多目录书架与跨设备阅读状态
+- 标签与智能分类
 - 远程同步、用户认证与团队共享
 - 插件式 Markdown 扩展，例如 Mermaid、数学公式和脚注
 

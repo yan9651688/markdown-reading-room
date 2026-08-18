@@ -3,8 +3,11 @@
 
   const elements = {
     root: document.documentElement,
-    appShell: document.getElementById("appShell"),
     searchInput: document.getElementById("searchInput"),
+    searchPanel: document.getElementById("searchPanel"),
+    searchSummary: document.getElementById("searchSummary"),
+    searchResults: document.getElementById("searchResults"),
+    clearSearchButton: document.getElementById("clearSearchButton"),
     syncText: document.getElementById("syncText"),
     themeButton: document.getElementById("themeButton"),
     themeLabel: document.getElementById("themeLabel"),
@@ -14,6 +17,7 @@
     libraryName: document.getElementById("libraryName"),
     fileCount: document.getElementById("fileCount"),
     fileTree: document.getElementById("fileTree"),
+    libraryTabs: [...document.querySelectorAll("[data-library-view]")],
     collapseAllButton: document.getElementById("collapseAllButton"),
     readerPane: document.getElementById("readerPane"),
     readerLoading: document.getElementById("readerLoading"),
@@ -26,13 +30,47 @@
     documentTitle: document.getElementById("documentTitle"),
     documentTime: document.getElementById("documentTime"),
     documentSize: document.getElementById("documentSize"),
+    favoriteButton: document.getElementById("favoriteButton"),
+    favoriteIcon: document.getElementById("favoriteIcon"),
+    favoriteLabel: document.getElementById("favoriteLabel"),
     article: document.getElementById("article"),
     outlineNav: document.getElementById("outlineNav"),
     toast: document.getElementById("toast"),
   };
 
+  const STORAGE = {
+    expanded: "md-reader-expanded",
+    favorites: "md-reader-favorites",
+    recents: "md-reader-recents",
+    scroll: "md-reader-scroll-positions",
+    lastPath: "md-reader-last-path",
+    theme: "md-reader-theme",
+  };
+
+  function readJSON(key, fallback) {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || "null");
+      return value ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function readArray(key) {
+    const value = readJSON(key, []);
+    return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+  }
+
+  function writeJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // Reading should keep working even when browser storage is unavailable.
+    }
+  }
+
   const state = {
-    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200 },
+    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.2.0" },
     nodes: [],
     version: "",
     fileCount: 0,
@@ -40,23 +78,43 @@
     currentMtime: 0,
     currentRequest: null,
     treeRefreshing: false,
-    expanded: loadExpanded(),
-    query: "",
+    expanded: new Set(readArray(STORAGE.expanded)),
+    favorites: new Set(readArray(STORAGE.favorites)),
+    recents: readArray(STORAGE.recents).slice(0, 12),
+    scrollPositions: readJSON(STORAGE.scroll, {}),
+    sidebarView: "tree",
     outlineObserver: null,
     toastTimer: null,
+    scrollSaveTimer: null,
+    searchTimer: null,
+    searchRequest: null,
+    searchResults: [],
+    searchSelection: -1,
   };
 
-  function loadExpanded() {
-    try {
-      const value = JSON.parse(localStorage.getItem("md-reader-expanded") || "[]");
-      return new Set(Array.isArray(value) ? value : []);
-    } catch {
-      return new Set();
-    }
+  function persistExpanded() {
+    writeJSON(STORAGE.expanded, [...state.expanded]);
   }
 
-  function persistExpanded() {
-    localStorage.setItem("md-reader-expanded", JSON.stringify([...state.expanded]));
+  function persistFavorites() {
+    writeJSON(STORAGE.favorites, [...state.favorites]);
+  }
+
+  function persistRecents() {
+    writeJSON(STORAGE.recents, state.recents);
+  }
+
+  function persistScroll(path = state.currentPath) {
+    if (!path) return;
+    state.scrollPositions[path] = Math.max(0, Math.round(elements.readerPane.scrollTop));
+    const entries = Object.entries(state.scrollPositions);
+    if (entries.length > 120) state.scrollPositions = Object.fromEntries(entries.slice(-120));
+    writeJSON(STORAGE.scroll, state.scrollPositions);
+  }
+
+  function scheduleScrollSave() {
+    window.clearTimeout(state.scrollSaveTimer);
+    state.scrollSaveTimer = window.setTimeout(() => persistScroll(), 180);
   }
 
   function applyTheme(theme, persist = true) {
@@ -65,11 +123,11 @@
     elements.themeLabel.textContent = selected === "dark" ? "浅色" : "深色";
     elements.themeButton.setAttribute("aria-label", selected === "dark" ? "切换到浅色主题" : "切换到深色主题");
     document.querySelector('meta[name="theme-color"]').setAttribute("content", selected === "dark" ? "#171816" : "#f7f7f5");
-    if (persist) localStorage.setItem("md-reader-theme", selected);
+    if (persist) localStorage.setItem(STORAGE.theme, selected);
   }
 
   function initializeTheme() {
-    const saved = localStorage.getItem("md-reader-theme");
+    const saved = localStorage.getItem(STORAGE.theme);
     const preferred = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     applyTheme(saved || preferred, Boolean(saved));
   }
@@ -142,21 +200,6 @@
     return null;
   }
 
-  function filterNodes(nodes, query) {
-    if (!query) return nodes;
-    const term = query.trim().toLocaleLowerCase("zh-CN");
-    return nodes.flatMap((node) => {
-      if (node.type === "file") {
-        const matches = `${node.name} ${node.filename} ${node.path}`.toLocaleLowerCase("zh-CN").includes(term);
-        return matches ? [node] : [];
-      }
-      const children = filterNodes(node.children || [], query);
-      const folderMatches = node.name.toLocaleLowerCase("zh-CN").includes(term);
-      if (!folderMatches && !children.length) return [];
-      return [{ ...node, children: folderMatches ? node.children : children }];
-    });
-  }
-
   function createIcon(className) {
     const icon = document.createElement("span");
     icon.className = className;
@@ -164,13 +207,75 @@
     return icon;
   }
 
-  function renderTree() {
-    elements.fileTree.replaceChildren();
-    const nodes = filterNodes(state.nodes, state.query);
-    if (!nodes.length) {
+  function createFileRow(node, quick = false) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `${quick ? "quick-row" : "tree-row tree-file-row"}${node.path === state.currentPath ? " is-active" : ""}`;
+    row.title = node.path;
+    row.dataset.path = node.path;
+    const icon = createIcon("tree-file-icon");
+    if (!quick) {
+      const spacer = document.createElement("span");
+      spacer.className = "tree-chevron-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      row.append(spacer);
+    }
+    const text = document.createElement("span");
+    text.className = quick ? "quick-row-text" : "tree-label";
+    const label = document.createElement("span");
+    label.className = quick ? "quick-row-title" : "tree-label-inner";
+    label.textContent = node.name;
+    text.append(label);
+    if (quick) {
+      const path = document.createElement("span");
+      path.className = "quick-row-path";
+      path.textContent = node.path;
+      text.append(path);
+    }
+    row.append(icon, text);
+    row.addEventListener("click", () => {
+      loadDocument(node.path);
+      closeSidebar();
+    });
+    return row;
+  }
+
+  function renderQuickList(paths, emptyText) {
+    const available = paths.map((path) => findFile(state.nodes, path)).filter(Boolean);
+    if (!available.length) {
       const empty = document.createElement("p");
       empty.className = "tree-empty";
-      empty.textContent = state.query ? "没有匹配的文件。换一个关键词试试。" : "目录里还没有 Markdown 文件。";
+      empty.textContent = emptyText;
+      elements.fileTree.append(empty);
+      return;
+    }
+    const list = document.createElement("div");
+    list.className = "quick-list";
+    available.forEach((node) => list.append(createFileRow(node, true)));
+    elements.fileTree.append(list);
+  }
+
+  function renderSidebar() {
+    elements.fileTree.replaceChildren();
+    for (const tab of elements.libraryTabs) {
+      const selected = tab.dataset.libraryView === state.sidebarView;
+      tab.classList.toggle("is-active", selected);
+      tab.setAttribute("aria-selected", String(selected));
+    }
+    elements.collapseAllButton.hidden = state.sidebarView !== "tree";
+
+    if (state.sidebarView === "recent") {
+      renderQuickList(state.recents, "还没有阅读记录。打开一篇文档后会出现在这里。");
+      return;
+    }
+    if (state.sidebarView === "favorites") {
+      renderQuickList([...state.favorites], "还没有收藏文档。点击文章标题旁的星标即可收藏。");
+      return;
+    }
+    if (!state.nodes.length) {
+      const empty = document.createElement("p");
+      empty.className = "tree-empty";
+      empty.textContent = "目录里还没有 Markdown 文件。";
       elements.fileTree.append(empty);
       return;
     }
@@ -183,7 +288,7 @@
           const row = document.createElement("button");
           row.type = "button";
           row.className = "tree-row tree-folder-row";
-          const isOpen = Boolean(state.query) || state.expanded.has(node.path);
+          const isOpen = state.expanded.has(node.path);
           row.setAttribute("aria-expanded", String(isOpen));
           const chevron = createIcon(`tree-chevron${isOpen ? " is-open" : ""}`);
           const icon = createIcon("tree-folder-icon");
@@ -199,7 +304,6 @@
           children.className = "tree-children";
           children.hidden = !isOpen;
           appendNodes(children, node.children || []);
-
           row.addEventListener("click", () => {
             const nextOpen = children.hidden;
             children.hidden = !nextOpen;
@@ -213,29 +317,40 @@
           parent.append(group);
           continue;
         }
-
-        const row = document.createElement("button");
-        row.type = "button";
-        row.className = `tree-row tree-file-row${node.path === state.currentPath ? " is-active" : ""}`;
-        row.title = node.path;
-        row.dataset.path = node.path;
-        const spacer = document.createElement("span");
-        spacer.className = "tree-chevron-spacer";
-        spacer.setAttribute("aria-hidden", "true");
-        const icon = createIcon("tree-file-icon");
-        const label = document.createElement("span");
-        label.className = "tree-label";
-        label.textContent = node.name;
-        row.append(spacer, icon, label);
-        row.addEventListener("click", () => {
-          loadDocument(node.path);
-          closeSidebar();
-        });
-        parent.append(row);
+        parent.append(createFileRow(node));
       }
     }
 
-    appendNodes(elements.fileTree, nodes);
+    appendNodes(elements.fileTree, state.nodes);
+  }
+
+  function updateFavoriteButton() {
+    const selected = Boolean(state.currentPath && state.favorites.has(state.currentPath));
+    elements.favoriteButton.classList.toggle("is-active", selected);
+    elements.favoriteButton.setAttribute("aria-pressed", String(selected));
+    elements.favoriteButton.setAttribute("aria-label", selected ? "取消收藏当前文档" : "收藏当前文档");
+    elements.favoriteIcon.textContent = selected ? "★" : "☆";
+    elements.favoriteLabel.textContent = selected ? "已收藏" : "收藏";
+  }
+
+  function toggleFavorite() {
+    if (!state.currentPath) return;
+    if (state.favorites.has(state.currentPath)) {
+      state.favorites.delete(state.currentPath);
+      showToast("已取消收藏");
+    } else {
+      state.favorites.add(state.currentPath);
+      showToast("已加入收藏");
+    }
+    persistFavorites();
+    updateFavoriteButton();
+    if (state.sidebarView === "favorites") renderSidebar();
+  }
+
+  function recordRecent(path) {
+    state.recents = [path, ...state.recents.filter((item) => item !== path)].slice(0, 12);
+    persistRecents();
+    if (state.sidebarView === "recent") renderSidebar();
   }
 
   function parseFrontmatter(source) {
@@ -304,8 +419,7 @@
 
     for (const link of elements.article.querySelectorAll("a")) {
       const href = link.getAttribute("href") || "";
-      if (!href) continue;
-      if (href.startsWith("#")) continue;
+      if (!href || href.startsWith("#")) continue;
       if (isExternal(href)) {
         if (/^https?:/i.test(href)) {
           link.target = "_blank";
@@ -313,7 +427,6 @@
         }
         continue;
       }
-
       const hashIndex = href.indexOf("#");
       const hash = hashIndex >= 0 ? href.slice(hashIndex + 1) : "";
       const targetWithoutHash = hashIndex >= 0 ? href.slice(0, hashIndex) : href;
@@ -322,7 +435,7 @@
         link.href = `?doc=${encodeURIComponent(localPath)}${hash ? `#${encodeURIComponent(hash)}` : ""}`;
         link.addEventListener("click", (event) => {
           event.preventDefault();
-          loadDocument(localPath).then(() => {
+          loadDocument(localPath, { restoreScroll: !hash }).then(() => {
             if (hash) document.getElementById(decodePath(hash))?.scrollIntoView({ block: "start" });
           });
         });
@@ -340,7 +453,6 @@
     const headings = [...elements.article.querySelectorAll("h1, h2, h3")];
     const used = new Set();
     for (const heading of headings) heading.id = slugify(heading.textContent || "", used);
-
     if (!headings.length) {
       const empty = document.createElement("p");
       empty.className = "outline-empty";
@@ -363,7 +475,6 @@
       links.set(heading, link);
       elements.outlineNav.append(link);
     }
-
     state.outlineObserver = new IntersectionObserver(
       (entries) => {
         const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
@@ -409,8 +520,9 @@
 
   async function loadDocument(path, options = {}) {
     if (!path) return;
-    const preserveScroll = Boolean(options.preserveScroll);
+    const previousPath = state.currentPath;
     const previousScroll = elements.readerPane.scrollTop;
+    if (previousPath) persistScroll(previousPath);
     if (state.currentRequest) state.currentRequest.abort();
     const controller = new AbortController();
     state.currentRequest = controller;
@@ -421,12 +533,18 @@
       renderMarkdown(file);
       state.currentPath = file.path;
       state.currentMtime = file.mtime;
+      localStorage.setItem(STORAGE.lastPath, file.path);
       updateURL(file.path);
-      renderTree();
+      updateFavoriteButton();
+      if (!options.silent || file.path !== previousPath) recordRecent(file.path);
+      renderSidebar();
       setReaderState("document");
+      const restored = Number(state.scrollPositions[file.path]) || 0;
       requestAnimationFrame(() => {
-        if (preserveScroll) elements.readerPane.scrollTop = previousScroll;
-        else elements.readerPane.scrollTop = 0;
+        requestAnimationFrame(() => {
+          if (options.preserveScroll) elements.readerPane.scrollTop = previousScroll;
+          else elements.readerPane.scrollTop = options.restoreScroll === false ? 0 : restored;
+        });
       });
       if (options.updated) showToast("文档内容已自动更新");
     } catch (error) {
@@ -435,6 +553,133 @@
     } finally {
       if (state.currentRequest === controller) state.currentRequest = null;
     }
+  }
+
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function appendHighlightedText(parent, text, query) {
+    const terms = query.split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!terms.length || !text) {
+      parent.textContent = text;
+      return;
+    }
+    const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "giu");
+    const exact = new RegExp(`^(?:${terms.map(escapeRegExp).join("|")})$`, "iu");
+    for (const part of text.split(pattern)) {
+      if (!part) continue;
+      if (exact.test(part)) {
+        const mark = document.createElement("mark");
+        mark.textContent = part;
+        parent.append(mark);
+      } else {
+        parent.append(document.createTextNode(part));
+      }
+    }
+  }
+
+  function setSearchPanel(open) {
+    elements.searchPanel.hidden = !open;
+  }
+
+  function clearSearch({ focus = false } = {}) {
+    window.clearTimeout(state.searchTimer);
+    if (state.searchRequest) state.searchRequest.abort();
+    state.searchResults = [];
+    state.searchSelection = -1;
+    elements.searchInput.value = "";
+    elements.searchResults.replaceChildren();
+    elements.searchSummary.textContent = "输入关键词搜索全部文档";
+    setSearchPanel(false);
+    if (focus) elements.searchInput.focus();
+  }
+
+  function searchResultButtons() {
+    return [...elements.searchResults.querySelectorAll(".search-result")];
+  }
+
+  function selectSearchResult(index) {
+    const buttons = searchResultButtons();
+    if (!buttons.length) return;
+    state.searchSelection = (index + buttons.length) % buttons.length;
+    buttons.forEach((button, buttonIndex) => button.classList.toggle("is-selected", buttonIndex === state.searchSelection));
+    buttons[state.searchSelection].scrollIntoView({ block: "nearest" });
+  }
+
+  function renderSearchResults(query, results) {
+    elements.searchResults.replaceChildren();
+    state.searchResults = results;
+    state.searchSelection = -1;
+    if (!results.length) {
+      const empty = document.createElement("p");
+      empty.className = "search-empty";
+      empty.textContent = "没有找到相关内容。可以缩短关键词，或检查文档是否刚刚加入目录。";
+      elements.searchResults.append(empty);
+      elements.searchSummary.textContent = `“${query}”没有结果`;
+      return;
+    }
+    elements.searchSummary.textContent = `找到 ${results.length} 篇相关文档`;
+    results.forEach((result, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "search-result";
+      button.setAttribute("role", "option");
+      const heading = document.createElement("span");
+      heading.className = "search-result-title";
+      appendHighlightedText(heading, result.title || result.name, query);
+      const path = document.createElement("span");
+      path.className = "search-result-path";
+      appendHighlightedText(path, result.path, query);
+      button.append(heading, path);
+      if (result.snippet) {
+        const snippet = document.createElement("span");
+        snippet.className = "search-result-snippet";
+        appendHighlightedText(snippet, result.snippet, query);
+        button.append(snippet);
+      }
+      button.addEventListener("mouseenter", () => selectSearchResult(index));
+      button.addEventListener("click", () => {
+        clearSearch();
+        loadDocument(result.path);
+      });
+      elements.searchResults.append(button);
+    });
+  }
+
+  async function runSearch(query) {
+    if (state.searchRequest) state.searchRequest.abort();
+    const controller = new AbortController();
+    state.searchRequest = controller;
+    elements.searchSummary.textContent = "正在搜索全部文档…";
+    elements.searchResults.replaceChildren();
+    setSearchPanel(true);
+    try {
+      const data = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}&limit=30`, { signal: controller.signal });
+      if (elements.searchInput.value.trim() !== query) return;
+      renderSearchResults(query, Array.isArray(data.results) ? data.results : []);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      elements.searchSummary.textContent = "搜索暂时不可用";
+      const message = document.createElement("p");
+      message.className = "search-empty";
+      message.textContent = error.message;
+      elements.searchResults.replaceChildren(message);
+    } finally {
+      if (state.searchRequest === controller) state.searchRequest = null;
+    }
+  }
+
+  function queueSearch(value) {
+    window.clearTimeout(state.searchTimer);
+    const query = value.trim();
+    if (!query) {
+      clearSearch();
+      return;
+    }
+    setSearchPanel(true);
+    elements.searchSummary.textContent = "准备搜索…";
+    state.searchTimer = window.setTimeout(() => runSearch(query), 180);
   }
 
   async function refreshTree({ initial = false } = {}) {
@@ -448,12 +693,12 @@
       state.version = data.version || "";
       elements.fileCount.textContent = `${state.fileCount} 篇文档`;
       elements.syncText.textContent = "已同步";
-      elements.syncText.title = new Date().toLocaleTimeString("zh-CN");
+      elements.syncText.title = `${new Date().toLocaleTimeString("zh-CN")} · 索引 ${Number(data.indexedCount) || 0} 篇 · 扫描 ${Number(data.scanMs) || 0} ms`;
 
       if (!state.fileCount) {
         state.currentPath = "";
         state.currentMtime = 0;
-        renderTree();
+        renderSidebar();
         setReaderState("empty");
         return;
       }
@@ -463,11 +708,15 @@
         const requested = new URL(location.href).searchParams.get("doc");
         current = requested ? findFile(state.nodes, requested) : null;
       }
+      if (!current) {
+        const lastPath = localStorage.getItem(STORAGE.lastPath) || "";
+        current = lastPath ? findFile(state.nodes, lastPath) : null;
+      }
       if (!current) current = firstFile(state.nodes);
 
-      renderTree();
+      if (changed || initial) renderSidebar();
       if (!current) return;
-      if (initial || !state.currentPath) {
+      if (initial || !state.currentPath || current.path !== state.currentPath) {
         await loadDocument(current.path);
       } else if (changed && current.mtime !== state.currentMtime) {
         await loadDocument(current.path, { preserveScroll: true, silent: true, updated: true });
@@ -493,20 +742,36 @@
   }
 
   function bindEvents() {
-    elements.themeButton.addEventListener("click", () => {
-      applyTheme(elements.root.dataset.theme === "dark" ? "light" : "dark");
-    });
-    elements.searchInput.addEventListener("input", (event) => {
-      state.query = event.target.value;
-      renderTree();
+    elements.themeButton.addEventListener("click", () => applyTheme(elements.root.dataset.theme === "dark" ? "light" : "dark"));
+    elements.favoriteButton.addEventListener("click", toggleFavorite);
+    elements.readerPane.addEventListener("scroll", scheduleScrollSave, { passive: true });
+    window.addEventListener("pagehide", () => persistScroll());
+
+    elements.searchInput.addEventListener("input", (event) => queueSearch(event.target.value));
+    elements.searchInput.addEventListener("focus", () => {
+      if (elements.searchInput.value.trim()) setSearchPanel(true);
     });
     elements.searchInput.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
-        elements.searchInput.value = "";
-        state.query = "";
-        renderTree();
+        event.preventDefault();
+        clearSearch();
         elements.searchInput.blur();
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        selectSearchResult(state.searchSelection + 1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        selectSearchResult(state.searchSelection - 1);
+      } else if (event.key === "Enter" && state.searchResults.length) {
+        event.preventDefault();
+        const selected = state.searchResults[state.searchSelection < 0 ? 0 : state.searchSelection];
+        clearSearch();
+        loadDocument(selected.path);
       }
+    });
+    elements.clearSearchButton.addEventListener("click", () => clearSearch({ focus: true }));
+    document.addEventListener("pointerdown", (event) => {
+      if (!elements.searchPanel.contains(event.target) && !elements.searchInput.contains(event.target)) setSearchPanel(false);
     });
     document.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "k") {
@@ -515,6 +780,13 @@
         elements.searchInput.select();
       }
     });
+
+    for (const tab of elements.libraryTabs) {
+      tab.addEventListener("click", () => {
+        state.sidebarView = tab.dataset.libraryView || "tree";
+        renderSidebar();
+      });
+    }
     elements.mobileMenuButton.addEventListener("click", () => {
       if (elements.sidebar.classList.contains("is-open")) closeSidebar();
       else openSidebar();
@@ -523,10 +795,10 @@
     elements.collapseAllButton.addEventListener("click", () => {
       state.expanded.clear();
       persistExpanded();
-      renderTree();
+      renderSidebar();
     });
     elements.retryButton.addEventListener("click", () => {
-      if (state.currentPath) loadDocument(state.currentPath);
+      if (state.currentPath) loadDocument(state.currentPath, { preserveScroll: true });
       else refreshTree({ initial: true });
     });
     window.addEventListener("popstate", () => {

@@ -16,12 +16,19 @@ INCLUDED_FILES = (
     Path("scripts/deploy.py"),
 )
 INCLUDED_TREES = (Path("assets/app"),)
+EXCLUDED_PARTS = {"__pycache__", ".DS_Store", "Thumbs.db"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+
+
+def is_release_file(path: Path) -> bool:
+    relative = path.relative_to(REPO_ROOT)
+    return path.is_file() and not any(part in EXCLUDED_PARTS for part in relative.parts) and path.suffix not in EXCLUDED_SUFFIXES
 
 
 def iter_release_files() -> list[Path]:
     files = list(INCLUDED_FILES)
     for tree in INCLUDED_TREES:
-        files.extend(path.relative_to(REPO_ROOT) for path in (REPO_ROOT / tree).rglob("*") if path.is_file())
+        files.extend(path.relative_to(REPO_ROOT) for path in (REPO_ROOT / tree).rglob("*") if is_release_file(path))
     return sorted(set(files), key=lambda path: path.as_posix())
 
 
