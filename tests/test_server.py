@@ -123,7 +123,7 @@ class HttpApiTests(unittest.TestCase):
             return json.loads(response.read().decode("utf-8"))
 
     def test_health_tree_file_and_search_endpoints(self) -> None:
-        self.assertEqual(self.get_json("/health")["version"], "0.2.0")
+        self.assertEqual(self.get_json("/health")["version"], "0.2.1")
         self.assertEqual(self.get_json("/api/tree")["fileCount"], 1)
         query = urllib.parse.quote("搜索命中")
         results = self.get_json(f"/api/search?q={query}")["results"]

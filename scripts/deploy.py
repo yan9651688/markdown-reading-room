@@ -14,7 +14,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parents[1]
 APP_TEMPLATE = SKILL_DIR / "assets" / "app"
 MARKER_NAME = ".markdown-reader-install.json"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 
 
 def configure_console() -> None:

@@ -70,7 +70,7 @@
   }
 
   const state = {
-    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.2.0" },
+    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.2.1" },
     nodes: [],
     version: "",
     fileCount: 0,
