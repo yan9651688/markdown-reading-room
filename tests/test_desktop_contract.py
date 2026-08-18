@@ -17,11 +17,11 @@ class DesktopContractTests(unittest.TestCase):
         cargo = (TAURI / "Cargo.toml").read_text(encoding="utf-8")
         rust = (TAURI / "src" / "lib.rs").read_text(encoding="utf-8")
 
-        self.assertEqual(package["version"], "0.4.2")
+        self.assertEqual(package["version"], "0.1.1")
         self.assertEqual(config["version"], package["version"])
         self.assertEqual(config["mainBinaryName"], "Moyue")
-        self.assertRegex(cargo, r'(?m)^version = "0\.4\.2"$')
-        self.assertIn('const APP_VERSION: &str = "0.4.2";', rust)
+        self.assertRegex(cargo, r'(?m)^version = "0\.1\.1"$')
+        self.assertIn('const APP_VERSION: &str = "0.1.1";', rust)
         self.assertEqual(config["build"]["frontendDist"], "../assets/app/static")
         self.assertTrue(config["app"]["withGlobalTauri"])
 

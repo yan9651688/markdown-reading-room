@@ -19,7 +19,7 @@ class FrontendContractTests(unittest.TestCase):
         requested_ids = set(re.findall(r'getElementById\("([^"]+)"\)', javascript))
         self.assertEqual(requested_ids - html_ids, set())
 
-    def test_v02_interaction_contract_is_present(self) -> None:
+    def test_search_and_reading_state_contract_is_present(self) -> None:
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         javascript = (STATIC / "app.js").read_text(encoding="utf-8")
         self.assertIn("搜索全部来源的标题与正文", html)
@@ -28,7 +28,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("md-reader-scroll-positions", javascript)
         self.assertIn("/api/search", javascript)
 
-    def test_v03_theme_center_contract_is_present(self) -> None:
+    def test_theme_center_contract_is_present(self) -> None:
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         javascript = (STATIC / "app.js").read_text(encoding="utf-8")
         appearance = (STATIC / "appearance.js").read_text(encoding="utf-8")
@@ -46,7 +46,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('.theme-card[data-reading-theme]', javascript)
         self.assertLess(html.index('<script src="/appearance.js"'), html.index('<link rel="stylesheet"'))
 
-    def test_v04_multi_library_contract_is_present(self) -> None:
+    def test_multi_library_contract_is_present(self) -> None:
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         javascript = (STATIC / "app.js").read_text(encoding="utf-8")
         stylesheet = (STATIC / "app.css").read_text(encoding="utf-8")
@@ -60,14 +60,14 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn(".tree-library-heading", stylesheet)
         self.assertIn('[data-source-tone="7"]', stylesheet)
 
-    def test_v042_shared_runtime_contract_is_present(self) -> None:
+    def test_shared_runtime_contract_is_present(self) -> None:
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         javascript = (STATIC / "app.js").read_text(encoding="utf-8")
         runtime = (STATIC / "runtime.js").read_text(encoding="utf-8")
         server = (ROOT / "assets" / "app" / "server.py").read_text(encoding="utf-8")
         deployer = (ROOT / "scripts" / "deploy.py").read_text(encoding="utf-8")
         for source in (html, javascript, server, deployer):
-            self.assertIn("0.4.2", source)
+            self.assertIn("0.1.1", source)
         self.assertLess(html.index('<script src="/runtime.js"'), html.index('<script src="/app.js"'))
         self.assertIn('id="addLibraryButton"', html)
         self.assertIn('id="emptyAddLibraryButton"', html)

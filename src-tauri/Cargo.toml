@@ -1,6 +1,6 @@
 [package]
 name = "markdown-reading-room"
-version = "0.4.2"
+version = "0.1.1"
 description = "A local-first Markdown reading room"
 authors = ["Markdown Reading Room contributors"]
 edition = "2021"

@@ -1,6 +1,6 @@
 {
   "name": "markdown-reading-room",
-  "version": "0.4.2",
+  "version": "0.1.1",
   "private": true,
   "description": "墨阅 Markdown 阅读室的跨平台桌面壳",
   "scripts": {

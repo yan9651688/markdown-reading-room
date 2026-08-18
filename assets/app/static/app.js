@@ -149,7 +149,7 @@
   }
 
   const state = {
-    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.4.2", libraries: [] },
+    config: { title: "Markdown 阅读室", rootName: "文档目录", pollMs: 2200, version: "0.1.1", libraries: [] },
     libraries: [],
     nodes: [],
     version: "",

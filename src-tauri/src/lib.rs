@@ -11,7 +11,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-const APP_VERSION: &str = "0.4.2";
+const APP_VERSION: &str = "0.1.1";
 const POLL_MS: u64 = 1_600;
 const MAX_MARKDOWN_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024;

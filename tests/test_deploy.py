@@ -61,7 +61,7 @@ class DeployTests(unittest.TestCase):
             self.assertEqual(config["libraries"][0]["root"], str(content.resolve()))
             self.assertEqual(config["title"], "测试阅读室")
             self.assertEqual(marker["format"], 3)
-            self.assertEqual(marker["version"], "0.4.2")
+            self.assertEqual(marker["version"], "0.1.1")
             self.assertTrue((output / "static" / "app.js").is_file())
             self.assertTrue((output / "static" / "runtime.js").is_file())
             self.assertTrue((output / "start-reader.bat").is_file())

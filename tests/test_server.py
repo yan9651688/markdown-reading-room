@@ -174,7 +174,7 @@ class HttpApiTests(unittest.TestCase):
             return json.loads(response.read().decode("utf-8"))
 
     def test_health_tree_file_and_search_endpoints(self) -> None:
-        self.assertEqual(self.get_json("/health")["version"], "0.4.2")
+        self.assertEqual(self.get_json("/health")["version"], "0.1.1")
         config = self.get_json("/api/config")
         self.assertTrue(config["features"]["themeCenter"])
         self.assertTrue(config["features"]["multiLibrary"])
