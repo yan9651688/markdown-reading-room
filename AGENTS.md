@@ -7,6 +7,7 @@
 - `scripts/` contains discovery, deployment, and release-packaging utilities.
 - `tests/` contains the Python `unittest` suite, including API, frontend contract, deployment, discovery, and release tests.
 - `docs/` stores project-facing images. `.github/workflows/` defines cross-platform CI and tagged releases.
+- `README.md` documents current behavior, `CHANGELOG.md` records completed releases, and `ROADMAP.md` contains non-binding future plans.
 - `SKILL.md` and `agents/` are legacy Agent/Skill distribution metadata. Generated packages belong in `dist/` and must not be committed.
 
 ## Build, Test, and Development Commands

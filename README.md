@@ -27,26 +27,7 @@
 - 浏览器端净化渲染结果，只读访问原始文档
 - Python 标准库服务端，无需 Node.js 和前端构建工具
 
-## v0.3 主题中心
-
-顶部的主题按钮会打开可视化主题中心。风格与明暗模式彼此独立，因此同一种阅读风格可以跟随系统，也可以固定为浅色或深色。主题仅改变本机浏览器中的显示效果，不会修改 Markdown 文件。
-
-GitHub、Notion、Codex 与 Claude 主题是面向阅读场景的灵感设计，并非对应产品的官方主题。
-
-## v0.4 多文档书架
-
-一个阅读室可以同时连接多个互不相干的 Markdown 目录。左侧来源栏负责在“全部”、Codex、Claude 或自定义 Agent 之间切换；选择“全部”时，目录会按来源分组展示，顶部搜索会聚合所有来源并标明每条结果来自哪里。
-
-所有目录都保持原位，阅读室只读访问。内部使用独立路径命名空间，因此多个 Agent 都生成 `README.md` 时也不会互相覆盖。最近阅读、收藏、阅读位置和上次选择的来源仍保存在当前浏览器中。
-
-### v0.4.1 引导式目录发现
-
-目录由用户最终决定。用户知道路径时直接部署；不知道时，Agent 可以运行只读发现工具，检查 Codex、Claude、通用 Agent 等常见位置，并返回候选名称、绝对路径、Markdown 数量、可信度和可复制的部署参数。发现结果不会自动加入书架，也不会扫描整块硬盘。
-
-```bash
-python scripts/discover.py
-python scripts/discover.py --scan-root "/path/to/projects" --json
-```
+> GitHub、Notion、Codex 与 Claude 风格是针对阅读场景设计的主题灵感，并非对应产品的官方主题。
 
 ## 快速运行
 
@@ -68,17 +49,20 @@ python assets/app/server.py \
 
 默认地址为 `http://127.0.0.1:4173`，仅当前电脑可以访问。
 
-## 作为 Agent Skill 部署
-
-仓库本身同时是一个 Codex Skill。Agent 读取 `SKILL.md` 后，可以使用部署脚本为用户生成独立运行目录：
-
-如果用户不知道 Markdown 在哪里，先运行：
+如果不确定 Markdown 文件位于哪里，可以先进行只读发现：
 
 ```bash
-python scripts/discover.py --json
+python scripts/discover.py
+python scripts/discover.py --scan-root "/path/to/projects" --json
 ```
 
-把候选目录和文档数量交给用户确认后，再部署：
+发现工具只检查常见 Agent 位置和用户指定的项目目录，不会自动添加来源，也不会扫描整块硬盘。
+
+## 兼容 Agent Skill 部署
+
+为兼容现有交付方式，仓库仍保留 Codex Skill。Agent 读取 `SKILL.md` 后，可以使用部署脚本生成独立运行目录：
+
+如果用户不知道 Markdown 在哪里，先按上面的只读发现流程确认候选目录，再部署：
 
 ```bash
 python scripts/deploy.py \
@@ -99,6 +83,10 @@ python scripts/deploy.py \
 
 ```text
 serve-markdown-library/
+├── README.md
+├── CHANGELOG.md
+├── ROADMAP.md
+├── AGENTS.md
 ├── SKILL.md
 ├── agents/openai.yaml
 ├── assets/app/
@@ -123,8 +111,6 @@ python scripts/build_release.py
 
 每次推送和 Pull Request 会在 Windows、macOS、Linux 上运行测试。推送 `v*` 标签后，GitHub Actions 自动生成并上传 Skill ZIP。
 
-版本按同一功能系列连续迭代十个小版本，例如 `v0.4.0` 至 `v0.4.9`，之后再进入 `v0.5.0`。
-
 ## 安全边界
 
 - 默认只监听 `127.0.0.1`
@@ -134,10 +120,10 @@ python scripts/build_release.py
 - 资源接口限制可访问的文件类型和路径范围
 - 当前版本不包含账号系统，不应直接暴露到公网
 
-## 路线图
+## 项目文档
 
-项目已从以 Agent Skill 为主的部署工具，逐步转向本地优先的跨平台 Markdown 文档产品。网页端、Windows 和 macOS 是当前主线，移动端将在桌面基础稳定后推进。
-
-方向性版本规划与调整原则见 [ROADMAP.md](ROADMAP.md)。路线图用于记录产品方向，不代表固定排期或交付承诺。
+- [CHANGELOG.md](CHANGELOG.md)：已经完成的版本变化
+- [ROADMAP.md](ROADMAP.md)：方向性规划与候选版本，不代表固定排期
+- [AGENTS.md](AGENTS.md)：代码贡献与验证规范
 
 欢迎通过 Issue 提交使用场景和改进建议。
