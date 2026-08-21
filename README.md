@@ -1,8 +1,8 @@
 # 墨阅 Markdown 阅读室
 
-[![Latest Release](https://img.shields.io/github/v/release/yan9651688/markdown-reading-room?display_name=tag&sort=semver)](https://github.com/yan9651688/markdown-reading-room/releases/latest)
-[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb)](https://github.com/yan9651688/markdown-reading-room/releases/latest)
-[![CI](https://github.com/yan9651688/markdown-reading-room/actions/workflows/ci.yml/badge.svg)](https://github.com/yan9651688/markdown-reading-room/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/yan9651688/moyue-reading-room?display_name=tag&sort=semver)](https://github.com/yan9651688/moyue-reading-room/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb)](https://github.com/yan9651688/moyue-reading-room/releases/latest)
+[![CI](https://github.com/yan9651688/moyue-reading-room/actions/workflows/ci.yml/badge.svg)](https://github.com/yan9651688/moyue-reading-room/actions/workflows/ci.yml)
 
 墨阅是一款本地 Markdown 阅读器，适合集中查看 Codex、Claude Code 和其他 Agent 生成的文档。
 
@@ -12,13 +12,13 @@
 
 ## 下载
 
-Windows 用户从 [GitHub Releases](https://github.com/yan9651688/markdown-reading-room/releases/latest) 下载：
+Windows 用户从 [GitHub Releases](https://github.com/yan9651688/moyue-reading-room/releases/latest) 下载：
 
 | 文件 | 用途 |
 | --- | --- |
-| [Moyue-Setup.exe](https://github.com/yan9651688/markdown-reading-room/releases/latest/download/Moyue-Setup.exe) | 安装版，适合日常使用 |
-| [Moyue-Portable.zip](https://github.com/yan9651688/markdown-reading-room/releases/latest/download/Moyue-Portable.zip) | 免安装，解压后运行 `Moyue.exe` |
-| [release-manifest.json](https://github.com/yan9651688/markdown-reading-room/releases/latest/download/release-manifest.json) | 文件大小和 SHA-256 校验值 |
+| [Moyue-Setup.exe](https://github.com/yan9651688/moyue-reading-room/releases/latest/download/Moyue-Setup.exe) | 安装版，适合日常使用 |
+| [Moyue-Portable.zip](https://github.com/yan9651688/moyue-reading-room/releases/latest/download/Moyue-Portable.zip) | 免安装，解压后运行 `Moyue.exe` |
+| [release-manifest.json](https://github.com/yan9651688/moyue-reading-room/releases/latest/download/release-manifest.json) | 文件大小和 SHA-256 校验值 |
 
 安装包暂未签名。若 Windows 出现 SmartScreen 提示，请先确认文件来自本仓库的 Releases 页面。
 
