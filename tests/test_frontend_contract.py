@@ -153,9 +153,22 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("setReviewDisposition", javascript)
         self.assertIn('elements.inboxList.classList.toggle("has-items"', javascript)
         self.assertIn('const enteringInbox = state.currentView !== "inbox" || elements.inboxView.hidden', javascript)
-        self.assertIn('if (state.currentView === "inbox") {\n        renderInbox();', javascript)
+        self.assertIn(
+            'if (state.currentView === "inbox") {\n        if (changed || initial) renderInbox();',
+            javascript,
+        )
         self.assertIn(".artifact-card", stylesheet)
         self.assertIn('[data-review-status="approved"]', stylesheet)
+
+    def test_desktop_filesystem_events_replace_idle_polling(self) -> None:
+        javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        runtime = (STATIC / "runtime.js").read_text(encoding="utf-8")
+        self.assertIn('tauriEvent.listen("moyue://library-changed"', runtime)
+        self.assertIn("onLibraryChanged", runtime)
+        self.assertIn("state.config?.features?.filesystemWatch", javascript)
+        self.assertIn('refreshTree({ source: "filesystem" })', javascript)
+        self.assertIn('if (changed || initial) renderInbox();', javascript)
+        self.assertNotIn("window.setInterval(() => refreshTree()", javascript)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_javascript_syntax(self) -> None:

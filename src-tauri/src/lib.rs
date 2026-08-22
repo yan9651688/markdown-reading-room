@@ -1,3 +1,6 @@
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,11 +11,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 const APP_VERSION: &str = "0.1.1";
 const POLL_MS: u64 = 1_600;
+const LIBRARY_CHANGED_EVENT: &str = "moyue://library-changed";
 const MAX_MARKDOWN_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
@@ -223,6 +227,13 @@ struct DiscoveryPayload {
     references: Vec<DiscoveryReference>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryChangedPayload {
+    reason: &'static str,
+    paths: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct MarkdownCount {
     count: u64,
@@ -239,6 +250,7 @@ struct DesktopState {
 struct AppState {
     config_path: PathBuf,
     inner: Mutex<DesktopState>,
+    watcher: Mutex<Option<RecommendedWatcher>>,
 }
 
 fn state_lock(state: &AppState) -> Result<MutexGuard<'_, DesktopState>, String> {
@@ -799,6 +811,97 @@ fn is_excluded(path: &Path) -> bool {
         .any(|component| is_excluded_name(component.as_os_str()))
 }
 
+fn watched_relative_path<'a>(path: &'a Path, roots: &[PathBuf]) -> &'a Path {
+    roots
+        .iter()
+        .find_map(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+}
+
+fn watch_path_is_relevant(path: &Path, roots: &[PathBuf]) -> bool {
+    let relative = watched_relative_path(path, roots);
+    if relative.as_os_str().is_empty() {
+        return true;
+    }
+    if is_excluded(relative) {
+        return false;
+    }
+    let file_extension = extension(relative);
+    MARKDOWN_EXTENSIONS.contains(&file_extension.as_str()) || relative.extension().is_none()
+}
+
+fn build_library_watcher(
+    app: AppHandle,
+    libraries: &[LibrarySource],
+) -> Result<RecommendedWatcher, String> {
+    let roots = libraries
+        .iter()
+        .filter(|source| source.root.is_dir())
+        .map(|source| source.root.clone())
+        .collect::<Vec<_>>();
+    let callback_roots = roots.clone();
+    let mut watcher = RecommendedWatcher::new(
+        move |result: notify::Result<Event>| {
+            let Ok(event) = result else {
+                return;
+            };
+            if matches!(event.kind, EventKind::Access(_)) {
+                return;
+            }
+            let changed_paths = event
+                .paths
+                .iter()
+                .filter(|path| watch_path_is_relevant(path, &callback_roots))
+                .count();
+            if changed_paths == 0 {
+                return;
+            }
+            let _ = app.emit(
+                LIBRARY_CHANGED_EVENT,
+                LibraryChangedPayload {
+                    reason: "filesystem",
+                    paths: changed_paths,
+                },
+            );
+        },
+        NotifyConfig::default(),
+    )
+    .map_err(|error| format!("无法启动目录监听：{error}"))?;
+
+    for root in roots {
+        watcher
+            .watch(&root, RecursiveMode::Recursive)
+            .map_err(|error| format!("无法监听目录 {}：{error}", display_path(&root)))?;
+    }
+    Ok(watcher)
+}
+
+fn rebuild_library_watcher(app: &AppHandle, state: &AppState, libraries: &[LibrarySource]) -> bool {
+    let watcher = match build_library_watcher(app.clone(), libraries) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            eprintln!("{error}");
+            None
+        }
+    };
+    match state.watcher.lock() {
+        Ok(mut current) => {
+            let active = watcher.is_some();
+            *current = watcher;
+            active
+        }
+        Err(_) => false,
+    }
+}
+
+fn library_watcher_is_active(state: &AppState) -> bool {
+    state
+        .watcher
+        .lock()
+        .map(|watcher| watcher.is_some())
+        .unwrap_or(false)
+}
+
 fn sort_file_entries(entries: &mut [fs::DirEntry]) {
     entries.sort_by(|left, right| {
         let a = left.file_name().to_string_lossy().to_lowercase();
@@ -1102,7 +1205,7 @@ fn resolve_virtual_path(
     Ok((source, to_relative_string(&relative_path), candidate))
 }
 
-fn config_payload(state: &DesktopState) -> ConfigPayload {
+fn config_payload(state: &DesktopState, filesystem_watch: bool) -> ConfigPayload {
     let root_name = match state.libraries.len() {
         0 => "尚未添加目录".to_string(),
         1 => state.libraries[0].name.clone(),
@@ -1137,6 +1240,7 @@ fn config_payload(state: &DesktopState) -> ConfigPayload {
             "nativeDirectoryPicker": true,
             "localDiscovery": true,
             "rustIndex": true,
+            "filesystemWatch": filesystem_watch,
         }),
     }
 }
@@ -1297,7 +1401,7 @@ async fn health(state: State<'_, AppState>) -> Result<HealthPayload, String> {
 async fn get_config(state: State<'_, AppState>) -> Result<ConfigPayload, String> {
     let mut desktop = state_lock(&state)?;
     refresh_index(&mut desktop);
-    Ok(config_payload(&desktop))
+    Ok(config_payload(&desktop, library_watcher_is_active(&state)))
 }
 
 #[tauri::command]
@@ -1539,7 +1643,11 @@ async fn pick_libraries(
     add_library_selections(&app, &mut desktop, selected)?;
     save_libraries(&state.config_path, &desktop.libraries)?;
     refresh_index(&mut desktop);
-    Ok(config_payload(&desktop))
+    let libraries = desktop.libraries.clone();
+    drop(desktop);
+    let watcher_active = rebuild_library_watcher(&app, &state, &libraries);
+    let desktop = state_lock(&state)?;
+    Ok(config_payload(&desktop, watcher_active))
 }
 
 #[tauri::command]
@@ -1557,12 +1665,17 @@ async fn add_discovered_libraries(
     add_library_selections(&app, &mut desktop, selections)?;
     save_libraries(&state.config_path, &desktop.libraries)?;
     refresh_index(&mut desktop);
-    Ok(config_payload(&desktop))
+    let libraries = desktop.libraries.clone();
+    drop(desktop);
+    let watcher_active = rebuild_library_watcher(&app, &state, &libraries);
+    let desktop = state_lock(&state)?;
+    Ok(config_payload(&desktop, watcher_active))
 }
 
 #[tauri::command]
 async fn remove_library(
     library_id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ConfigPayload, String> {
     let mut desktop = state_lock(&state)?;
@@ -1574,7 +1687,11 @@ async fn remove_library(
     save_libraries(&state.config_path, &desktop.libraries)?;
     desktop.documents.clear();
     refresh_index(&mut desktop);
-    Ok(config_payload(&desktop))
+    let libraries = desktop.libraries.clone();
+    drop(desktop);
+    let watcher_active = rebuild_library_watcher(&app, &state, &libraries);
+    let desktop = state_lock(&state)?;
+    Ok(config_payload(&desktop, watcher_active))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1591,12 +1708,20 @@ pub fn run() {
                     .asset_protocol_scope()
                     .allow_directory(&source.root, true);
             }
+            let watcher = match build_library_watcher(app.handle().clone(), &libraries) {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    eprintln!("{error}");
+                    None
+                }
+            };
             app.manage(AppState {
                 config_path,
                 inner: Mutex::new(DesktopState {
                     libraries,
                     ..DesktopState::default()
                 }),
+                watcher: Mutex::new(watcher),
             });
             Ok(())
         })
@@ -1660,6 +1785,26 @@ mod tests {
         assert!(resolve_virtual_path(&libraries, "@project/README.md").is_ok());
         assert!(resolve_virtual_path(&libraries, "@project/../secret.md").is_err());
         assert!(resolve_virtual_path(&libraries, "@missing/README.md").is_err());
+    }
+
+    #[test]
+    fn watches_markdown_and_folder_changes_but_ignores_build_outputs() {
+        let temp = tempdir().expect("temporary directory");
+        let roots = vec![temp.path().to_path_buf()];
+        assert!(watch_path_is_relevant(
+            &temp.path().join("notes").join("result.md"),
+            &roots,
+        ));
+        assert!(watch_path_is_relevant(&temp.path().join("notes"), &roots));
+        assert!(watch_path_is_relevant(temp.path(), &roots));
+        assert!(!watch_path_is_relevant(
+            &temp.path().join("notes").join("draft.txt"),
+            &roots,
+        ));
+        assert!(!watch_path_is_relevant(
+            &temp.path().join("target").join("generated.md"),
+            &roots,
+        ));
     }
 
     #[test]

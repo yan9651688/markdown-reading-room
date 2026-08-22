@@ -182,6 +182,11 @@
     discoverySelections: new Set(),
     discoveryRunning: false,
     discoveryAutoStarted: false,
+    liveUpdates: false,
+    liveRefreshTimer: null,
+    liveRefreshQueued: false,
+    liveUnlisten: null,
+    pollingTimer: null,
   };
 
   if (!INBOX_FILTERS.has(state.inboxFilter)) state.inboxFilter = "pending";
@@ -587,6 +592,7 @@
     try {
       const config = await runtime.pickLibraries();
       applyConfig(config);
+      await configureAutomaticRefresh();
       await refreshTree({ initial: true });
       if (state.libraries.length > previousCount) showToast(`已添加 ${state.libraries.length - previousCount} 个文档来源`);
       else showToast("没有添加新的目录");
@@ -807,6 +813,7 @@
     try {
       const config = await runtime.addDiscoveredLibraries(selections);
       applyConfig(config);
+      await configureAutomaticRefresh();
       state.discoverySelections.clear();
       await refreshTree({ initial: true });
       const added = state.libraries.length - previousCount;
@@ -833,6 +840,7 @@
       state.currentMtime = 0;
       state.currentFile = null;
       applyConfig(config);
+      await configureAutomaticRefresh();
       await refreshTree({ initial: true });
       showToast(`已移除 ${library.name}`);
     } catch (error) {
@@ -1683,10 +1691,50 @@
     state.searchTimer = window.setTimeout(() => runSearch(query), 180);
   }
 
-  async function refreshTree({ initial = false } = {}) {
-    if (state.treeRefreshing) return;
+  function queueLiveRefresh() {
+    window.clearTimeout(state.liveRefreshTimer);
+    elements.syncText.textContent = "发现更新";
+    state.liveRefreshTimer = window.setTimeout(() => {
+      refreshTree({ source: "filesystem" });
+    }, 420);
+  }
+
+  async function configureAutomaticRefresh() {
+    window.clearInterval(state.pollingTimer);
+    state.pollingTimer = null;
+    if (typeof state.liveUnlisten === "function") state.liveUnlisten();
+    state.liveUnlisten = null;
+    state.liveUpdates = false;
+
+    const supportsWatch = runtime.isDesktop
+      && state.config?.features?.filesystemWatch
+      && typeof runtime.onLibraryChanged === "function";
+    if (supportsWatch) {
+      try {
+        state.liveUnlisten = await runtime.onLibraryChanged(() => queueLiveRefresh());
+        state.liveUpdates = true;
+        elements.syncText.textContent = "实时监听";
+        elements.syncText.title = "目录发生变化后自动更新";
+        return;
+      } catch {
+        // Fall back to polling when the native watcher is unavailable.
+      }
+    }
+
+    state.pollingTimer = window.setInterval(
+      () => refreshTree({ source: "poll" }),
+      Math.max(800, Number(state.config.pollMs) || 2200),
+    );
+  }
+
+  async function refreshTree({ initial = false, source = "manual" } = {}) {
+    if (state.treeRefreshing) {
+      if (source === "filesystem") state.liveRefreshQueued = true;
+      return;
+    }
     state.treeRefreshing = true;
     try {
+      if (source === "filesystem") elements.syncText.textContent = "正在同步";
       const data = await fetchJSON("/api/tree");
       const changed = data.version !== state.version;
       state.nodes = Array.isArray(data.nodes) ? data.nodes : [];
@@ -1696,11 +1744,13 @@
         const node = libraryNodeById(library.id);
         return { ...library, fileCount: Number(node?.fileCount) || 0 };
       });
-      reconcileArtifactSnapshot();
-      renderLibrarySources();
-      updateLibrarySummary();
-      elements.syncText.textContent = "已同步";
-      elements.syncText.title = `${new Date().toLocaleTimeString("zh-CN")} · 索引 ${Number(data.indexedCount) || 0} 篇 · 扫描 ${Number(data.scanMs) || 0} ms`;
+      if (changed || initial) {
+        reconcileArtifactSnapshot();
+        renderLibrarySources();
+        updateLibrarySummary();
+      }
+      elements.syncText.textContent = state.liveUpdates ? "实时监听" : "已同步";
+      elements.syncText.title = `最后同步 ${new Date().toLocaleTimeString("zh-CN")}，索引 ${Number(data.indexedCount) || 0} 篇，扫描 ${Number(data.scanMs) || 0} ms`;
 
       if (!state.fileCount) {
         state.currentPath = "";
@@ -1741,7 +1791,7 @@
         return;
       }
       if (state.currentView === "inbox") {
-        renderInbox();
+        if (changed || initial) renderInbox();
         return;
       }
 
@@ -1764,6 +1814,10 @@
       if (initial) showError(error.message);
     } finally {
       state.treeRefreshing = false;
+      if (state.liveRefreshQueued) {
+        state.liveRefreshQueued = false;
+        queueLiveRefresh();
+      }
     }
   }
 
@@ -1833,6 +1887,11 @@
     elements.favoriteButton.addEventListener("click", toggleFavorite);
     elements.readerPane.addEventListener("scroll", scheduleScrollSave, { passive: true });
     window.addEventListener("pagehide", () => persistScroll());
+    window.addEventListener("beforeunload", () => {
+      window.clearTimeout(state.liveRefreshTimer);
+      window.clearInterval(state.pollingTimer);
+      if (typeof state.liveUnlisten === "function") state.liveUnlisten();
+    });
 
     elements.searchInput.addEventListener("input", (event) => queueSearch(event.target.value));
     elements.searchInput.addEventListener("focus", () => {
@@ -1920,8 +1979,8 @@
     setReaderState("loading");
     try {
       applyConfig(await fetchJSON("/api/config"));
+      await configureAutomaticRefresh();
       await refreshTree({ initial: true });
-      window.setInterval(() => refreshTree(), Math.max(800, Number(state.config.pollMs) || 2200));
     } catch (error) {
       showError(error.message);
     }

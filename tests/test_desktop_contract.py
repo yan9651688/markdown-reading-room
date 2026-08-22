@@ -60,6 +60,15 @@ class DesktopContractTests(unittest.TestCase):
             self.assertIn(command, registered_block.group(1))
             self.assertIn(f'"{command}"', runtime)
 
+    def test_desktop_uses_native_filesystem_events(self) -> None:
+        cargo = (TAURI / "Cargo.toml").read_text(encoding="utf-8")
+        rust = (TAURI / "src" / "lib.rs").read_text(encoding="utf-8")
+        self.assertRegex(cargo, r'(?m)^notify = "6\.1"$')
+        self.assertIn('const LIBRARY_CHANGED_EVENT: &str = "moyue://library-changed";', rust)
+        self.assertIn("RecommendedWatcher", rust)
+        self.assertIn("rebuild_library_watcher", rust)
+        self.assertIn('"filesystemWatch": filesystem_watch', rust)
+
     def test_windows_release_script_is_wired_to_the_desktop_build(self) -> None:
         package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         script = (ROOT / "scripts" / "build_windows_release.ps1").read_text(encoding="ascii")

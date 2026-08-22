@@ -2,6 +2,7 @@
   "use strict";
 
   const tauriCore = window.__TAURI__?.core;
+  const tauriEvent = window.__TAURI__?.event;
   const isDesktop = typeof tauriCore?.invoke === "function";
 
   function normalizedError(error) {
@@ -109,6 +110,20 @@
     }
   }
 
+  async function onLibraryChanged(callback) {
+    if (!isDesktop || typeof tauriEvent?.listen !== "function") {
+      throw new Error("当前运行时不支持目录实时监听");
+    }
+    if (typeof callback !== "function") throw new Error("目录监听回调无效");
+    try {
+      return await tauriEvent.listen("moyue://library-changed", (event) => {
+        callback(event?.payload || {});
+      });
+    } catch (error) {
+      throw normalizedError(error);
+    }
+  }
+
   window.MarkdownRuntime = Object.freeze({
     kind: isDesktop ? "desktop" : "web",
     isDesktop,
@@ -119,5 +134,6 @@
     pickLibraries,
     addDiscoveredLibraries,
     removeLibrary,
+    onLibraryChanged,
   });
 })();
